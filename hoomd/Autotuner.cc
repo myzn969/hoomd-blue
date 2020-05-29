@@ -11,6 +11,9 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cfloat>
+#include <sstream>
+
+#include <pybind11/stl.h>
 
 using namespace std;
 namespace py = pybind11;
@@ -31,32 +34,17 @@ Autotuner::Autotuner(const std::vector<unsigned int>& parameters,
                      unsigned int period,
                      const std::string& name,
                      std::shared_ptr<const ExecutionConfiguration> exec_conf)
-    : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name), m_parameters(parameters),
-      m_state(STARTUP), m_current_sample(0), m_current_element(0), m_calls(0),
+    : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name),
+      m_state(STARTUP), m_current_sample(0),  m_calls(0),
       m_exec_conf(exec_conf), m_mode(mode_median),
       m_attached(false), m_have_param(false), m_have_timing(false)
     {
     m_exec_conf->msg->notice(5) << "Constructing Autotuner " << nsamples << " " << period << " " << name << endl;
 
-    // ensure that m_nsamples is odd (so the median is easy to get). This also ensures that m_nsamples > 0.
-    if ((m_nsamples & 1) == 0)
-        m_nsamples += 1;
-
-    // initialize memory
-    if (m_parameters.size() == 0)
-        {
-        this->m_exec_conf->msg->error() << "Autotuner " << m_name << " got no parameters" << endl;
-        throw std::runtime_error("Error initializing autotuner");
-        }
-    m_samples.resize(m_parameters.size());
-    m_sample_median.resize(m_parameters.size());
-
-    for (unsigned int i = 0; i < m_parameters.size(); i++)
-        {
-        m_samples[i].resize(m_nsamples);
-        }
-
-    m_current_param = m_parameters[m_current_element];
+    // initialize with a single dimension
+    std::vector<std::vector<unsigned int> > params;
+    params.push_back(parameters);
+    initialize(params);
 
     // create CUDA events
     #ifdef ENABLE_HIP
@@ -68,6 +56,35 @@ Autotuner::Autotuner(const std::vector<unsigned int>& parameters,
     m_sync = false;
     }
 
+/*! \param parameters List of valid parameters (n dimensions)
+    \param nsamples Number of time samples to take at each parameter
+    \param period Number of calls to begin() before sampling is redone
+    \param name Descriptive name (used in messenger output)
+    \param exec_conf Execution configuration
+*/
+Autotuner::Autotuner(const std::vector< std::vector<unsigned int> >& parameters,
+                     unsigned int nsamples,
+                     unsigned int period,
+                     const std::string& name,
+                     std::shared_ptr<const ExecutionConfiguration> exec_conf)
+    : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name),
+      m_state(STARTUP), m_current_sample(0), m_calls(0),
+      m_exec_conf(exec_conf), m_mode(mode_median),
+      m_attached(false), m_have_param(false), m_have_timing(false)
+    {
+    m_exec_conf->msg->notice(5) << "Constructing Autotuner " << nsamples << " " << period << " " << name << endl;
+
+    initialize(parameters);
+
+    // create CUDA events
+    #ifdef ENABLE_HIP
+    hipEventCreate(&m_start);
+    hipEventCreate(&m_stop);
+    CHECK_CUDA_ERROR();
+    #endif
+
+    m_sync = false;
+    }
 
 /*! \param start first valid parameter
     \param end last valid parameter
@@ -87,41 +104,23 @@ Autotuner::Autotuner(unsigned int start,
                      const std::string& name,
                      std::shared_ptr<const ExecutionConfiguration> exec_conf)
     : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name),
-      m_state(STARTUP), m_current_sample(0), m_current_element(0), m_calls(0), m_current_param(0),
-      m_exec_conf(exec_conf), m_mode(mode_median), m_attached(false),
+      m_state(STARTUP), m_current_sample(0), m_calls(0),
+      m_current_param(0), m_exec_conf(exec_conf), m_mode(mode_median), m_attached(false),
       m_have_param(false), m_have_timing(false)
     {
     m_exec_conf->msg->notice(5) << "Constructing Autotuner " << " " << start << " " << end << " " << step << " "
                                 << nsamples << " " << period << " " << name << endl;
 
-    // initialize the parameters
-    m_parameters.resize((end - start) / step + 1);
+    // initialize a flat autotuner with a range of parameters
+    std::vector<std::vector< unsigned int > > params(1);
+    params[0].resize((end - start) / step + 1);
     unsigned int cur_param = start;
-    for (unsigned int i = 0; i < m_parameters.size(); i++)
+    for (unsigned int i = 0; i < params[0].size(); i++)
         {
-        m_parameters[i] = cur_param;
+        params[0][i] = cur_param;
         cur_param += step;
         }
-
-    // ensure that m_nsamples is odd (so the median is easy to get). This also ensures that m_nsamples > 0.
-    if ((m_nsamples & 1) == 0)
-        m_nsamples += 1;
-
-    // initialize memory
-    if (m_parameters.size() == 0)
-        {
-        m_exec_conf->msg->error() << "Autotuner " << m_name << " got no parameters" << endl;
-        throw std::runtime_error("Error initializing autotuner");
-        }
-    m_samples.resize(m_parameters.size());
-    m_sample_median.resize(m_parameters.size());
-
-    for (unsigned int i = 0; i < m_parameters.size(); i++)
-        {
-        m_samples[i].resize(m_nsamples);
-        }
-
-    m_current_param = m_parameters[m_current_element];
+    initialize(params);
 
     // create CUDA events
     #ifdef ENABLE_HIP
@@ -143,11 +142,50 @@ Autotuner::~Autotuner()
     #endif
     }
 
-/*! \param enabled true to enable sampling, false to disable it
-*/
-void Autotuner::setEnabled(bool enabled)
+void Autotuner::initialize(const std::vector<std::vector<unsigned int> >& params)
     {
-    m_enabled = enabled;
+    m_parameters = params;
+
+    // ensure that m_nsamples is odd (so the median is easy to get). This also ensures that m_nsamples > 0.
+    if ((m_nsamples & 1) == 0)
+        m_nsamples += 1;
+
+    m_enable_dim.resize(m_parameters.size(), true);
+    m_current_element.resize(m_parameters.size(), 0);
+    m_current_param.resize(m_parameters.size());
+    for (unsigned int n = 0; n < m_parameters.size(); ++n)
+        {
+        // initialize memory
+        if (m_parameters[n].size() == 0)
+            {
+            this->m_exec_conf->msg->error() << "Autotuner " << m_name << ", dimension " << n << " got no parameters" << endl;
+            throw std::runtime_error("Error initializing autotuner");
+            }
+
+        m_current_param[n] = m_parameters[n][m_current_element[n]];
+        }
+    }
+
+/*! \param enabled true to enable sampling, false to disable it
+    \param dimension to enable/disable
+*/
+void Autotuner::setEnabled(bool enabled, unsigned int dim)
+    {
+    assert(dim < m_enable_dim.size());
+    m_enable_dim[dim] = enabled;
+
+    bool enable_any = false;
+    for (auto is_enabled: m_enable_dim)
+        {
+        if (is_enabled)
+            {
+            enable_any = true;
+            break;
+            }
+        }
+
+    // the autotuner is enabled if any of its dimensions are currently tuning
+    m_enabled = enable_any;
 
     if (!enabled)
         {
@@ -158,12 +196,17 @@ void Autotuner::setEnabled(bool enabled)
             // if not complete, issue a warning
             if (!isComplete())
                 {
-                m_exec_conf->msg->notice(2) << "Disabling Autotuner " << m_name << " before initial scan completed!" << std::endl;
                 }
             else
                 {
                 // ensure that we are in the idle state and have an up to date optimal parameter
-                m_current_element = 0;
+                for (unsigned int i = 0; i < m_current_element.size(); ++i)
+                    {
+                    if (m_enable_dim[i])
+                        {
+                        m_current_element[i] = 0;
+                        }
+                    }
                 m_state = IDLE;
                 m_current_param = computeOptimalParameter();
                 }
@@ -224,11 +267,25 @@ void Autotuner::end()
 
         if (! attached)
             {
-            m_samples[m_current_element][m_current_sample] = sample;
+            if (m_samples.find(m_current_element) == m_samples.end())
+                {
+                // initialize the storage for this element
+                m_samples[m_current_element].resize(m_nsamples);
+                }
+
+            for (unsigned int i = 0; i < m_current_element.size(); ++i)
+                m_samples[m_current_element][m_current_sample] = sample;
             }
 
-        m_exec_conf->msg->notice(9) << "Autotuner " << m_name << ": t(" << m_current_param << "," << m_current_sample
-                                     << ") = " << sample << endl;
+        // print stats
+        std::ostringstream oss;
+        oss << "(";
+        for (auto p: m_current_param)
+            oss << p << ", ";
+        oss << ")";
+
+        m_exec_conf->msg->notice(9) << "Autotuner " << m_name << ": t[" << oss.str() << "," << m_current_sample
+                                     << "] = " << sample << endl;
 
         if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
             CHECK_CUDA_ERROR();
@@ -261,32 +318,100 @@ void Autotuner::end()
             if (m_current_sample >= m_nsamples)
                 {
                 m_current_sample = 0;
-                m_current_element++;
 
-                // if we hit the end of the elements, transition to the IDLE state and compute the optimal parameter
-                if (m_current_element >= m_parameters.size())
+                bool done = false;
+                for (unsigned int i = 0; i < m_current_element.size(); ++i)
                     {
-                    m_current_element = 0;
+                    if (m_enable_dim[i])
+                        m_current_element[i]++;
+                    else
+                        continue;
+
+                    if (m_current_element[i] >= m_parameters[i].size())
+                        {
+                        // find the next active tuning dimension:
+                        unsigned int next_dim;
+                        for (next_dim = i + 1; next_dim < m_current_element.size(); ++next_dim)
+                            {
+                            if (m_enable_dim[next_dim])
+                                break;
+                            }
+
+                        // carry over
+                        if (next_dim < m_current_element.size())
+                            {
+                            m_current_element[next_dim]++;
+                            m_current_element[i] = 0;
+                            }
+                        else
+                           {
+                           done = true;
+                           break;
+                           }
+                        }
+                    }
+
+                if (done)
+                    {
+                    for (unsigned int i = 0; i < m_current_element.size(); ++i)
+                        {
+                        if (m_enable_dim[i])
+                            m_current_element[i] = 0;
+                        }
+
                     m_state = IDLE;
                     m_current_param = computeOptimalParameter();
                     }
                 else
                     {
                     // if moving on to the next element, update the cached parameter to set
-                    m_current_param = m_parameters[m_current_element];
+                    for (unsigned int i = 0; i < m_parameters.size(); ++i)
+                        m_current_param[i] = m_parameters[i][m_current_element[i]];
                     }
                 }
             }
         else if (m_state == SCANNING)
             {
-            // move on to the next element
-            m_current_element++;
-
-            // if we hit the end of the elements, transition to the IDLE state and compute the optimal parameter, and move
-            // on to the next sample for next time
-            if (m_current_element >= m_parameters.size())
+            bool done = false;
+            for (unsigned int i = 0; i < m_current_element.size(); ++i)
                 {
-                m_current_element = 0;
+                if (m_enable_dim[i])
+                    m_current_element[i]++;
+                else
+                    continue;
+
+                if (m_current_element[i] >= m_parameters[i].size())
+                    {
+                    // find the next active tuning dimension:
+                    unsigned int next_dim;
+                    for (next_dim = i + 1; next_dim < m_current_element.size(); ++next_dim)
+                        {
+                        if (m_enable_dim[next_dim])
+                            break;
+                        }
+
+                    // carry over
+                    if (next_dim < m_current_element.size())
+                        {
+                        m_current_element[next_dim]++;
+                        m_current_element[i] = 0;
+                        }
+                    else
+                       {
+                       done = true;
+                       break;
+                       }
+                    }
+                }
+
+            if (done)
+                {
+                for (unsigned int i = 0; i < m_current_element.size(); ++i)
+                    {
+                    if (m_enable_dim[i])
+                        m_current_element[i] = 0;
+                    }
+
                 m_state = IDLE;
                 m_current_param = computeOptimalParameter();
                 m_current_sample = (m_current_sample + 1) % m_nsamples;
@@ -294,7 +419,8 @@ void Autotuner::end()
             else
                 {
                 // if moving on to the next element, update the cached parameter to set
-                m_current_param = m_parameters[m_current_element];
+                for (unsigned int i = 0; i < m_parameters.size(); ++i)
+                    m_current_param[i] = m_parameters[i][m_current_element[i]];
                 }
             }
         else if (m_state == IDLE)
@@ -308,7 +434,8 @@ void Autotuner::end()
                 m_calls = 0;
 
                 // initialize a scan
-                m_current_param = m_parameters[m_current_element];
+                for (unsigned int i = 0; i < m_parameters.size(); ++i)
+                    m_current_param[i] = m_parameters[i][m_current_element[i]];
                 m_state = SCANNING;
                 m_exec_conf->msg->notice(4) << "Autotuner " << m_name << " - beginning scan" << std::endl;
                 }
@@ -321,7 +448,7 @@ void Autotuner::end()
     computeOptimalParameter computes the median time among all samples for a given element. It then chooses the
     fastest time (with the lowest index breaking a tie) and returns the parameter that resulted in that time.
 */
-unsigned int Autotuner::computeOptimalParameter()
+std::vector<unsigned int> Autotuner::computeOptimalParameter()
     {
     bool is_root = true;
 
@@ -336,9 +463,9 @@ unsigned int Autotuner::computeOptimalParameter()
 
     // start by computing the median for each element
     std::vector<float> v;
-    for (unsigned int i = 0; i < m_parameters.size(); i++)
+    for (auto elem: m_samples)
         {
-        v = m_samples[i];
+        v = elem.second;
         #ifdef ENABLE_MPI
         if (m_sync && nranks)
             {
@@ -363,66 +490,91 @@ unsigned int Autotuner::computeOptimalParameter()
                 float sum = 0.0f;
                 for (std::vector<float>::iterator it = v.begin(); it != v.end(); ++it)
                     sum += *it;
-                m_sample_median[i] = sum/v.size();
-                }
-            else if (m_mode == mode_max)
-                {
-                // compute maximum
-                m_sample_median[i] = -FLT_MIN;
-                for (std::vector<float>::iterator it = v.begin(); it != v.end(); ++it)
-                    {
-                    if (*it > m_sample_median[i])
-                        {
-                        m_sample_median[i] = *it;
-                        }
-                    }
+                m_sample_median[elem.first] = sum/v.size();
                 }
             else
                 {
                 // compute median
                 size_t n = v.size() / 2;
                 nth_element(v.begin(), v.begin()+n, v.end());
-                m_sample_median[i] = v[n];
+                m_sample_median[elem.first] = v[n];
                 }
             }
         }
 
-    unsigned int opt = 0;
+    std::vector<unsigned int> opt(m_parameters.size());
 
     if (is_root)
         {
-        // now find the minimum and maximum times in the medians
-        float min = m_sample_median[0];
-        unsigned int min_idx = 0;
-        //float max = m_sample_median[0];
-        //unsigned int max_idx = 0;
+        // now find the minimum times in the medians
+        float min = m_sample_median.begin()->second;
+        std::vector< unsigned int > min_idx;
 
-        for (unsigned int i = 1; i < m_parameters.size(); i++)
+        for (auto elem: m_sample_median)
             {
-            if (m_sample_median[i] < min)
+            if (elem.second < min)
                 {
-                min = m_sample_median[i];
-                min_idx = i;
+                min = elem.second;
+                min_idx = elem.first;
                 }
-            /*if (m_sample_median[i] > max)
-                {
-                max = m_sample_median[i];
-                max_idx = i;
-                }*/
             }
 
         // get the optimal param
-        opt = m_parameters[min_idx];
-        // unsigned int percent = int(max/min * 100.0f)-100;
+        for (unsigned int i = 0; i < opt.size(); ++i)
+            {
+            assert(min_idx.size() == m_parameters.size());
+            opt[i] = m_parameters[i][min_idx[i]];
+            }
 
         // print stats
-        m_exec_conf->msg->notice(4) << "Autotuner " << m_name << " found optimal parameter " << opt << endl;
+        std::ostringstream oss;
+        oss << "(";
+        for (auto p: opt)
+            oss << p << ", ";
+        oss << ")";
+
+        m_exec_conf->msg->notice(4) << "Autotuner " << m_name << " found optimal parameter " << oss.str() << endl;
         }
 
     #ifdef ENABLE_MPI
     if (m_sync && nranks) bcast(opt, 0, m_exec_conf->getMPICommunicator());
     #endif
     return opt;
+    }
+
+bool Autotuner::sanityCheck(const std::vector<unsigned int>& param)
+    {
+    // sanity check
+    if (param.size() != m_parameters.size())
+        {
+        this->m_exec_conf->msg->warning() << "Dimensionality of tuning parameter is " << param.size() << ", expected "
+            << m_parameters.size() << " for tuner " << m_name << std::endl;
+        return false;
+        }
+
+    for (unsigned int i = 0; i < m_parameters.size(); ++i)
+        {
+        bool found = false;
+
+        for (auto q: m_parameters[i])
+            {
+            if (q == param[i])
+                found = true;
+            }
+        if (!found)
+            {
+            // print stats
+            std::ostringstream oss;
+            oss << "(";
+            for (auto p: param)
+                oss << p << ", ";
+            oss << ")";
+
+            this->m_exec_conf->msg->warning() << "Unknown tuning parameter " << oss.str() << " in dimension " << i << std::endl;
+            return false;
+            }
+        }
+    return true;
     }
 
 //! Measure the execution time of the next kernel launch
@@ -432,11 +584,17 @@ unsigned int Autotuner::computeOptimalParameter()
  * This method is intended be called from a separate host thread and
  * only returns when the kernel launch has completed.
  */
-float Autotuner::measure(unsigned int param)
+float Autotuner::measure(const std::vector<unsigned int>& param)
     {
     if (!m_attached)
         {
         throw std::runtime_error("The Autotuner is not attached. Cannot measure kernel run time.\n");
+        }
+
+    if (!sanityCheck(param))
+        {
+        m_exec_conf->msg->warning() << "Returning timing of 0. Tuning may not be sucessful." << std::endl;
+        return 0.0;
         }
 
         {
@@ -463,11 +621,17 @@ float Autotuner::measure(unsigned int param)
     return m;
     }
 
-void Autotuner::setOptimalParameter(unsigned int opt)
+void Autotuner::setOptimalParameter(const std::vector<unsigned int>& opt)
     {
     if (! m_attached)
         {
         throw std::runtime_error("The Autotuner is not attached. Cannot set optimal parameter value.\n");
+        }
+
+    if (!sanityCheck(opt))
+        {
+        m_exec_conf->msg->warning() << "Ignoring optimal parameter." << std::endl;
+        return;
         }
 
         {
@@ -486,7 +650,6 @@ void Autotuner::setOptimalParameter(unsigned int opt)
     m_cv.notify_one();
     }
 
-
 void export_Autotuner(py::module& m)
     {
     py::class_<Autotuner, std::shared_ptr<Autotuner> >(m,"Autotuner")
@@ -498,6 +661,7 @@ void export_Autotuner(py::module& m)
     .def("setPeriod", &Autotuner::setPeriod)
     .def("getName", &Autotuner::getName)
     .def("getParameterList", &Autotuner::getParameterList)
+    .def("getEnableDimension", &Autotuner::getEnableDimension)
     .def("attach", &Autotuner::attach, pybind11::call_guard<py::gil_scoped_release>())
     .def("measure", &Autotuner::measure, pybind11::call_guard<py::gil_scoped_release>())
     .def("setOptimalParameter", &Autotuner::setOptimalParameter, pybind11::call_guard<py::gil_scoped_release>())
