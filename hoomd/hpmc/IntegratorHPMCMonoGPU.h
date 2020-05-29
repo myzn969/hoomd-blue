@@ -367,18 +367,21 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
         dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_depletants_accept", this->m_exec_conf));
 
     // tuning parameters for depletants
-    std::vector<unsigned int> valid_params_depletants;
-    for (unsigned int block_size = dev_prop.warpSize; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += dev_prop.warpSize)
+    std::vector<std::vector<unsigned int> > valid_params_depletants(2);
+    for (unsigned int depletants_per_thread=1; depletants_per_thread <= 32; depletants_per_thread*=2)
+        valid_params_depletants[0].push_back(depletants_per_thread);
+
+    for (unsigned int block_size = dev_prop.warpSize;
+        block_size <= (unsigned int) dev_prop.maxThreadsPerBlock;
+        block_size += dev_prop.warpSize)
         {
         for (unsigned int group_size=1; group_size <= narrow_phase_max_tpp; group_size*=2)
             {
-            for (unsigned int depletants_per_thread=1; depletants_per_thread <= 32; depletants_per_thread*=2)
-                {
-                if ((block_size % group_size) == 0)
-                    valid_params_depletants.push_back(block_size*1000000 + depletants_per_thread*10000 + group_size);
-                }
+            if ((block_size % group_size) == 0)
+                valid_params_depletants[1].push_back(block_size*100 + group_size);
             }
         }
+
     m_tuner_depletants = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants", this->m_exec_conf));
     m_tuner_depletants_phase1 = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants_phase1", this->m_exec_conf));
     m_tuner_depletants_phase2 = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants_phase2", this->m_exec_conf));
@@ -1221,10 +1224,10 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                                 // insert depletants on-the-fly
                                 m_tuner_depletants->begin();
-                                unsigned int param = m_tuner_depletants->getParam();
-                                args.block_size = param/1000000;
-                                unsigned int depletants_per_thread = (param % 1000000)/10000;
-                                args.tpp = param%10000;
+                                unsigned int depletants_per_thread = m_tuner_depletants->getParam(0);
+                                unsigned int param = m_tuner_depletants->getParam(1);
+                                args.block_size = param/100;
+                                args.tpp = param%100;
 
                                 gpu::hpmc_implicit_args_t implicit_args(
                                     itype,
@@ -1351,10 +1354,10 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                                 // phase 1, insert into excluded volume of particle i
                                 m_tuner_depletants_phase1->begin();
-                                unsigned int param = m_tuner_depletants_phase1->getParam();
-                                args.block_size = param/1000000;
-                                implicit_args.depletants_per_thread = (param % 1000000)/10000;
-                                args.tpp = param%10000;
+                                implicit_args.depletants_per_thread = m_tuner_depletants_phase1->getParam(0);
+                                unsigned int param = m_tuner_depletants_phase1->getParam(1);
+                                args.block_size = param/100;
+                                args.tpp = param%100;
                                 gpu::hpmc_depletants_auxilliary_phase1<Shape>(args,
                                     implicit_args,
                                     auxilliary_args,
@@ -1365,10 +1368,10 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                                 // phase 2, reinsert into excluded volume of i's neighbors
                                 m_tuner_depletants_phase2->begin();
-                                param = m_tuner_depletants_phase2->getParam();
-                                args.block_size = param/1000000;
-                                implicit_args.depletants_per_thread = (param % 1000000)/10000;
-                                args.tpp = param%10000;
+                                implicit_args.depletants_per_thread = m_tuner_depletants_phase2->getParam(0);
+                                param = m_tuner_depletants_phase2->getParam(1);
+                                args.block_size = param/100;
+                                args.tpp = param%100;
                                 gpu::hpmc_depletants_auxilliary_phase2<Shape>(args,
                                     implicit_args,
                                     auxilliary_args,
