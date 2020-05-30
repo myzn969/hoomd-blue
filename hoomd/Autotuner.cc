@@ -178,23 +178,15 @@ void Autotuner::initialize(const std::vector<std::vector<unsigned int> >& params
 /*! \param enabled true to enable sampling, false to disable it
     \param dimension to enable/disable
 */
-void Autotuner::setEnabled(bool enabled, unsigned int dim)
+void Autotuner::setEnableDimension(unsigned int dim, bool enabled)
     {
     assert(dim < m_enable_dim.size());
     m_enable_dim[dim] = enabled;
+    }
 
-    bool enable_any = false;
-    for (auto is_enabled: m_enable_dim)
-        {
-        if (is_enabled)
-            {
-            enable_any = true;
-            break;
-            }
-        }
-
-    // the autotuner is enabled if any of its dimensions are currently tuning
-    m_enabled = enable_any;
+void Autotuner::setEnabled(bool enabled)
+    {
+    m_enabled = enabled;
 
     if (!enabled)
         {
@@ -205,6 +197,7 @@ void Autotuner::setEnabled(bool enabled, unsigned int dim)
             // if not complete, issue a warning
             if (!isComplete())
                 {
+                m_exec_conf->msg->notice(2) << "Disabling Autotuner " << m_name << " before initial scan completed!" << std::endl;
                 }
             else
                 {

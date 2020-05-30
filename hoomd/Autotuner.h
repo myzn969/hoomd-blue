@@ -148,7 +148,7 @@ class PYBIND11_EXPORT Autotuner
         //! Enable/disable sampling
         /*! \param enabled true to enable sampling, false to disable it
         */
-        void setEnabled(bool enabled, unsigned int dim = 0);
+        void setEnabled(bool enabled);
 
         //! Test if initial sampling is complete
         /*! \returns true if the initial sampling run is complete
@@ -218,10 +218,17 @@ class PYBIND11_EXPORT Autotuner
             }
 
         //! Return the enable/disable flags per dimension
-        const std::vector<bool>& getEnableDimension() const
+        const bool getEnableDimension(unsigned int dim) const
             {
-            return m_enable_dim;
+            assert(dim < m_parameters.size());
+            return m_enable_dim[dim];
             }
+
+        //! Enable/disable sampling in one dimension
+        /*! \param enabled true to enable sampling, false to disable it
+         *! \param dim the dimension to enable/diable
+         */
+        void setEnableDimension(unsigned int dim, bool enabled);
 
         //! Return the name of this tuner
         std::string getName()
