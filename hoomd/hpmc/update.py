@@ -395,26 +395,6 @@ class boxmc(_updater):
         self.cpp_updater.computeAspectRatios();
         _updater.enable(self);
 
-class _grid_shift(_updater):
-    R""" Apply random shift to simulation cell grid
-
-    Args :
-        mc (:py:mod:`hoomd.hpmc.integrate`): MC integrator.
-        seed (int): RNG seed
-        period (int): The period (number of time steps) of execution for this updater
-    """
-    def __init__(self, mc, seed, period=1):
-        #initialize base class
-        _updater.__init__(self);
-        if not hoomd.context.current.device.cpp_exec_conf.isCUDAEnabled():
-            self.cpp_updater = _hpmc.UpdaterGridShift(hoomd.context.current.system_definition,
-                mc.cpp_integrator, seed)
-        else:
-            self.cpp_updater = _hpmc.UpdaterGridShiftGPU(hoomd.context.current.system_definition,
-                mc.cpp_integrator, seed)
-
-        self.setupUpdater(period);
-
 class wall(_updater):
     R""" Apply wall updates with a user-provided python callback.
 
@@ -869,11 +849,6 @@ class clusters(_updater):
 
         # register the clusters updater
         self.setupUpdater(period)
-
-<<<<<<< HEAD
-        # add as MC move
-        self.mc = mc
-        self.mc.trigger.addToSet(self.cpp_updater)
 
     def set_params(self, move_ratio=None, flip_probability=None):
         R""" Set options for the clusters moves.
