@@ -86,7 +86,8 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                                      const unsigned int *d_n_depletants,
                                      const unsigned int global_work_offset,
                                      const unsigned int n_work_local,
-                                     const unsigned int max_n_depletants
+                                     const unsigned int max_n_depletants,
+                                     const unsigned int *d_type_params
                                      )
     {
     // variables to tell what type of thread we are
@@ -162,7 +163,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
 
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
-        s_params[cur_type].load_shared(s_extra, available_bytes);
+        s_params[cur_type].load_shared(s_extra, available_bytes, d_type_params[cur_type]);
 
     // initialize the shared memory array for communicating overlaps
     if (master && group == 0)
@@ -704,7 +705,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
         unsigned int available_bytes = max_extra_bytes;
         for (unsigned int i = 0; i < args.num_types; ++i)
             {
-            params[i].allocate_shared(ptr, available_bytes);
+            params[i].load_shared(ptr, available_bytes, args.d_type_params[i]);
             }
         unsigned int extra_bytes = max_extra_bytes - available_bytes;
         shared_bytes += extra_bytes;
@@ -749,6 +750,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
             assert(auxilliary_args.d_trial_vel);
             assert(auxilliary_args.d_deltaF_int);
             assert(auxilliary_args.d_n_depletants_ntrial);
+            assert(auxilliary_args.d_type_params);
 
             hipLaunchKernelGGL((kernel::hpmc_insert_depletants_phase1<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>),
                 dim3(grid), dim3(threads), shared_bytes, auxilliary_args.streams_phase1[idev],
@@ -794,7 +796,8 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
                                  auxilliary_args.d_n_depletants_ntrial,
                                  auxilliary_args.work_offset[idev],
                                  auxilliary_args.nwork_local[idev],
-                                 implicit_args.max_n_depletants[idev]);
+                                 implicit_args.max_n_depletants[idev],
+                                 args.d_type_params);
             }
         }
     else

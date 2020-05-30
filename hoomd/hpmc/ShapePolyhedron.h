@@ -91,28 +91,30 @@ struct poly3d_data : param_base
     //! Load dynamic data members into shared memory and increase pointer
     /*! \param ptr Pointer to load data to (will be incremented)
         \param available_bytes Size of remaining shared memory allocation
+        \param mask bitmask indicating which arrays we should load
      */
-    DEVICE void load_shared(char *& ptr, unsigned int &available_bytes)
+    HOSTDEVICE void load_shared(char *& ptr, unsigned int &available_bytes,
+                                unsigned int mask) const
         {
-        tree.load_shared(ptr, available_bytes);
-        verts.load_shared(ptr, available_bytes);
-        face_offs.load_shared(ptr, available_bytes);
-        face_verts.load_shared(ptr, available_bytes);
-        face_overlap.load_shared(ptr, available_bytes);
+        const unsigned int tree_bits = tree.getTuningBits();
+        tree.load_shared(ptr, available_bytes, mask & ((1 << tree_bits)-1));
+        mask >>= tree_bits;
+
+        if (mask & 1)
+            verts.load_shared(ptr, available_bytes);
+        if (mask & 2)
+            face_offs.load_shared(ptr, available_bytes);
+        if (mask & 4)
+            face_verts.load_shared(ptr, available_bytes);
+        if (mask & 8)
+            face_overlap.load_shared(ptr, available_bytes);
         }
 
-    //! Determine size of the shared memory allocation
-    /*! \param ptr Pointer to increment
-        \param available_bytes Size of remaining shared memory allocation
-     */
-    HOSTDEVICE void allocate_shared(char *& ptr, unsigned int &available_bytes) const
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        tree.allocate_shared(ptr, available_bytes);
-        verts.allocate_shared(ptr, available_bytes);
-        face_offs.allocate_shared(ptr, available_bytes);
-        face_verts.allocate_shared(ptr, available_bytes);
-        face_overlap.allocate_shared(ptr, available_bytes);
+        return 4 + GPUTree::getTuningBits();
         }
+
 
     #ifdef ENABLE_HIP
     //! Set CUDA memory hints
@@ -199,10 +201,10 @@ struct ShapePolyhedron
         #endif
         }
 
-    //! Returns true if the overlap check supports sweeping both shapes by a sphere of given radius
-    HOSTDEVICE static bool supportsSweepRadius()
+    //! Returns the number of tuning bits for the GPU kernels
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        return false;
+        return detail::poly3d_data::getTuningBits();
         }
 
     quat<Scalar> orientation;    //!< Orientation of the polyhedron

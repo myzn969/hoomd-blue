@@ -224,7 +224,7 @@ class ManagedArray
 
             \returns true if array was loaded into shared memory
          */
-        DEVICE bool load_shared(char *& s_ptr, unsigned int &available_bytes)
+        HOSTDEVICE bool load_shared(char *& s_ptr, unsigned int &available_bytes) const
             {
             // align ptr to size of data type
             void *ptr_align = allocate_shared(s_ptr, available_bytes);
@@ -288,7 +288,7 @@ class ManagedArray
         #endif
 
     private:
-        T *data;                 //!< Data pointer
+        mutable T *data;         //!< Data pointer
         T *ptr;                  //!< Original data pointer
         unsigned int N;          //!< Number of data elements
         unsigned int managed;    //!< True if we are CUDA managed

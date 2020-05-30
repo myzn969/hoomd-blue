@@ -179,7 +179,7 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
     m_tuner_flip = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_flip", this->m_exec_conf));
 
     // tuning parameters for overlap checks
-    std::vector<unsigned int> valid_params;
+    std::vector< std::vector<unsigned int> > valid_params(1+this->m_pdata->getNTypes());
     unsigned int warp_size = this->m_exec_conf->dev_prop.warpSize;
     const unsigned int overlaps_max_tpp = dev_prop.maxThreadsDim[2];
     for (unsigned int block_size = warp_size; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += warp_size)
@@ -192,16 +192,22 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
                 if (t == 1 || Shape::isParallel())
                     {
                     if ((s*t <= block_size) && ((block_size % (s*t)) == 0))
-                        valid_params.push_back(block_size*1000000 + s*100 + t);
+                        valid_params[0].push_back(block_size*1000000 + s*100 + t);
                     }
                 }
             }
         }
 
+    unsigned int tuning_bits = Shape::getTuningBits();
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params[1+itype].push_back(param);
+        }
     m_tuner_overlaps = std::shared_ptr<Autotuner>(new Autotuner(valid_params, 5, 100000, "clusters_overlaps", this->m_exec_conf));
 
     // tuning parameters for depletants
-    std::vector<unsigned int> valid_params_depletants;
+    std::vector< std::vector<unsigned int> > valid_params_depletants(1+this->m_pdata->getNTypes());
     for (unsigned int block_size = dev_prop.warpSize; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += dev_prop.warpSize)
         {
         for (unsigned int group_size=1; group_size <= overlaps_max_tpp; group_size*=2)
@@ -209,9 +215,14 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
             for (unsigned int depletants_per_thread=1; depletants_per_thread <= 32; depletants_per_thread*=2)
                 {
                 if ((block_size % group_size) == 0)
-                    valid_params_depletants.push_back(block_size*1000000 + depletants_per_thread*10000 + group_size);
+                    valid_params_depletants[0].push_back(block_size*1000000 + depletants_per_thread*10000 + group_size);
                 }
             }
+        }
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params_depletants[1+itype].push_back(param);
         }
     m_tuner_depletants = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "clusters_depletants", this->m_exec_conf));
 
@@ -782,7 +793,9 @@ void UpdaterClustersGPU<Shape>::findInteractions(unsigned int timestep, const qu
                     true,
                     this->m_exec_conf->dev_prop,
                     m_old_gpu_partition,
-                    &m_overlaps_streams.front());
+                    &m_overlaps_streams.front(),
+                    0 // tuning
+                    );
 
                 this->m_exec_conf->beginMultiGPU();
 
@@ -803,10 +816,11 @@ void UpdaterClustersGPU<Shape>::findInteractions(unsigned int timestep, const qu
                  */
 
                 m_tuner_overlaps->begin();
-                unsigned int param = m_tuner_overlaps->getParam();
+                unsigned int param = m_tuner_overlaps->getParam(0);
                 args.block_size = param/1000000;
                 args.tpp = (param%1000000)/100;
                 args.overlap_threads = param%100;
+                args.d_type_params = m_tuner_overlaps->getDeviceParams()+1;
                 gpu::hpmc_cluster_overlaps<Shape>(args, params.data());
                 if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                     CHECK_CUDA_ERROR();
@@ -862,10 +876,11 @@ void UpdaterClustersGPU<Shape>::findInteractions(unsigned int timestep, const qu
 
                         // insert depletants on-the-fly
                         m_tuner_depletants->begin();
-                        unsigned int param = m_tuner_depletants->getParam();
+                        unsigned int param = m_tuner_depletants->getParam(0);
                         args.block_size = param/1000000;
                         unsigned int depletants_per_thread = (param % 1000000)/10000;
                         args.tpp = param%10000;
+                        args.d_type_params = m_tuner_depletants->getDeviceParams()+1;
 
                         gpu::hpmc_implicit_args_t implicit_args(
                             itype,

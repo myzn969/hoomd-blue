@@ -340,7 +340,7 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
     m_tuner_num_depletants_ntrial = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_num_depletants_ntrial", this->m_exec_conf));
 
     // tuning parameters for narrow phase
-    std::vector<unsigned int> valid_params;
+    std::vector< std::vector< unsigned int> > valid_params(this->m_pdata->getNTypes()+1);
     unsigned int warp_size = this->m_exec_conf->dev_prop.warpSize;
     const unsigned int narrow_phase_max_tpp = this->m_exec_conf->dev_prop.maxThreadsDim[2];
     for (unsigned int block_size = warp_size; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += warp_size)
@@ -353,12 +353,18 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
                 if (t == 1 || Shape::isParallel())
                     {
                     if ((s*t <= block_size) && ((block_size % (s*t)) == 0))
-                        valid_params.push_back(block_size*1000000 + s*100 + t);
+                        valid_params[0].push_back(block_size*1000000 + s*100 + t);
                     }
                 }
             }
         }
 
+    unsigned int tuning_bits = Shape::getTuningBits();
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params[1+itype].push_back(param);
+        }
     m_tuner_narrow = std::shared_ptr<Autotuner>(new Autotuner(valid_params, 5, 100000, "hpmc_narrow", this->m_exec_conf));
 
     m_tuner_convergence = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize,
@@ -367,7 +373,7 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
         dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_depletants_accept", this->m_exec_conf));
 
     // tuning parameters for depletants
-    std::vector<std::vector<unsigned int> > valid_params_depletants(2);
+    std::vector<std::vector<unsigned int> > valid_params_depletants(2+this->m_pdata->getNTypes());
     for (unsigned int depletants_per_thread=1; depletants_per_thread <= 32; depletants_per_thread*=2)
         valid_params_depletants[0].push_back(depletants_per_thread);
 
@@ -380,6 +386,11 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
             if ((block_size % group_size) == 0)
                 valid_params_depletants[1].push_back(block_size*100 + group_size);
             }
+        }
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params_depletants[2+itype].push_back(param);
         }
 
     m_tuner_depletants = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants", this->m_exec_conf));
@@ -993,7 +1004,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     0, // d_reject_out
                     this->m_exec_conf->dev_prop,
                     this->m_pdata->getGPUPartition(),
-                    0);
+                    0,// streams
+                    0 // tuning parameters
+                    );
 
                 // propose trial moves, \sa gpu::kernel::hpmc_moves
 
@@ -1157,7 +1170,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         d_reject_out.data,
                         this->m_exec_conf->dev_prop,
                         this->m_pdata->getGPUPartition(),
-                        &m_narrow_phase_streams.front());
+                        &m_narrow_phase_streams.front(),
+                        0 //tuning parameters
+                        );
 
                     /*
                      *  check overlaps, new configuration simultaneously against the old and the new configuration
@@ -1166,10 +1181,11 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     this->m_exec_conf->beginMultiGPU();
 
                     m_tuner_narrow->begin();
-                    unsigned int param = m_tuner_narrow->getParam();
+                    unsigned int param = m_tuner_narrow->getParam(0);
                     args.block_size = param/1000000;
                     args.tpp = (param%1000000)/100;
                     args.overlap_threads = param%100;
+                    args.d_type_params = m_tuner_narrow->getDeviceParams()+1;
                     gpu::hpmc_narrow_phase<Shape>(args, params.data());
                     if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                         CHECK_CUDA_ERROR();
@@ -1228,6 +1244,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 unsigned int param = m_tuner_depletants->getParam(1);
                                 args.block_size = param/100;
                                 args.tpp = param%100;
+                                args.d_type_params = m_tuner_depletants->getDeviceParams()+2;
 
                                 gpu::hpmc_implicit_args_t implicit_args(
                                     itype,
@@ -1354,6 +1371,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                                 // phase 1, insert into excluded volume of particle i
                                 m_tuner_depletants_phase1->begin();
+                                args.d_type_params = m_tuner_depletants_phase1->getDeviceParams()+2;
                                 implicit_args.depletants_per_thread = m_tuner_depletants_phase1->getParam(0);
                                 unsigned int param = m_tuner_depletants_phase1->getParam(1);
                                 args.block_size = param/100;
@@ -1368,6 +1386,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                                 // phase 2, reinsert into excluded volume of i's neighbors
                                 m_tuner_depletants_phase2->begin();
+                                args.d_type_params = m_tuner_depletants_phase2->getDeviceParams()+2;
                                 implicit_args.depletants_per_thread = m_tuner_depletants_phase2->getParam(0);
                                 param = m_tuner_depletants_phase2->getParam(1);
                                 args.block_size = param/100;

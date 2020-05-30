@@ -152,10 +152,10 @@ struct ShapeSphinx
     //!Ignore flag for overlaps
     HOSTDEVICE static bool isParallel() {return false; }
 
-    //! Retrns true if the overlap check supports sweeping both shapes by a sphere of given radius
-    HOSTDEVICE static bool supportsSweepRadius()
+    //! Returns the number of tuning bits for the GPU kernels
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        return false;
+        return detail::sphinx3d_params::getTuningBits();
         }
 
     quat<Scalar> orientation;                   //!< Orientation of the sphinx

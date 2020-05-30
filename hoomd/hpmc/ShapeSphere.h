@@ -82,21 +82,19 @@ struct param_base
     //! Load dynamic data members into shared memory and increase pointer
     /*! \param ptr Pointer to load data to (will be incremented)
         \param available_bytes Size of remaining shared memory allocation
+        \param mask bitmask to indicate which arrays we should load
      */
-    DEVICE inline void load_shared(char *& ptr,unsigned int &available_bytes)
+    HOSTDEVICE inline void load_shared(char *& ptr,unsigned int &available_bytes,
+                                       unsigned int mask) const
         {
         // default implementation does nothing
         }
 
-    //! Determine size of the shared memory allocation
-    /*! \param ptr Pointer to increment
-        \param available_bytes Size of remaining shared memory allocation
-     */
-    HOSTDEVICE void allocate_shared(char *& ptr,unsigned int &available_bytes) const
+    //! Returns the number of available bits for tuning
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        // default implementation does nothing
+        return 0;
         }
-
     };
 
 
@@ -171,6 +169,12 @@ struct ShapeSphere
 
     //! Returns true if this shape splits the overlap check over several threads of a warp using threadIdx.x
     HOSTDEVICE static bool isParallel() { return false; }
+
+    //! Returns the number of tuning bits for the GPU kernels
+    HOSTDEVICE static inline unsigned int getTuningBits()
+        {
+        return sph_params::getTuningBits();
+        }
 
     quat<Scalar> orientation;    //!< Orientation of the sphere (unused)
 

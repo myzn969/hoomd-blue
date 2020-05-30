@@ -145,10 +145,10 @@ struct ShapeEllipsoid
     //! Returns true if this shape splits the overlap check over several threads of a warp using threadIdx.x
     HOSTDEVICE static bool isParallel() { return false; }
 
-    //! Returns true if the overlap check supports sweeping both shapes by a sphere of given radius
-    HOSTDEVICE static bool supportsSweepRadius()
+    //! Returns the number of tuning bits for the GPU kernels
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        return false;
+        return ell_params::getTuningBits();
         }
 
     quat<Scalar> orientation;    //!< Orientation of the polygon

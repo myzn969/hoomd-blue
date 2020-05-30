@@ -59,7 +59,8 @@ struct hpmc_args_t
                 unsigned int *_d_reject_out,
                 const hipDeviceProp_t &_devprop,
                 const GPUPartition& _gpu_partition,
-                const hipStream_t *_streams)
+                const hipStream_t *_streams,
+                unsigned int *_d_type_params)
                 : d_postype(_d_postype),
                   d_orientation(_d_orientation),
                   d_vel(_d_vel),
@@ -99,7 +100,8 @@ struct hpmc_args_t
                   d_reject_out(_d_reject_out),
                   devprop(_devprop),
                   gpu_partition(_gpu_partition),
-                  streams(_streams)
+                  streams(_streams),
+                  d_type_params(_d_type_params)
         {
         };
 
@@ -143,6 +145,7 @@ struct hpmc_args_t
     const hipDeviceProp_t& devprop;     //!< CUDA device properties
     const GPUPartition& gpu_partition; //!< Multi-GPU partition
     const hipStream_t *streams;        //!< kernel streams
+    unsigned int *d_type_params;       //!< Per-type tuning parameters
     };
 
 //! Wraps arguments for hpmc_update_pdata

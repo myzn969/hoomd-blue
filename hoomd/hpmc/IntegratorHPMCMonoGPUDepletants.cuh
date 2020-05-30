@@ -80,7 +80,8 @@ __global__ void hpmc_insert_depletants(const Scalar4 *d_trial_postype,
                                      bool repulsive,
                                      unsigned int work_offset,
                                      unsigned int max_depletant_queue_size,
-                                     const unsigned int *d_n_depletants)
+                                     const unsigned int *d_n_depletants,
+                                     const unsigned int *d_type_params)
     {
     // variables to tell what type of thread we are
     unsigned int group = threadIdx.z;
@@ -153,7 +154,7 @@ __global__ void hpmc_insert_depletants(const Scalar4 *d_trial_postype,
 
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
-        s_params[cur_type].load_shared(s_extra, available_bytes);
+        s_params[cur_type].load_shared(s_extra, available_bytes, d_type_params[cur_type]);
 
     // initialize the shared memory array for communicating overlaps
     if (master && group == 0)
@@ -703,7 +704,7 @@ void depletants_launcher(const hpmc_args_t& args, const hpmc_implicit_args_t& im
         unsigned int available_bytes = max_extra_bytes;
         for (unsigned int i = 0; i < args.num_types; ++i)
             {
-            params[i].allocate_shared(ptr, available_bytes);
+            params[i].load_shared(ptr, available_bytes, args.d_type_params[i]);
             }
         unsigned int extra_bytes = max_extra_bytes - available_bytes;
         shared_bytes += extra_bytes;
@@ -744,6 +745,7 @@ void depletants_launcher(const hpmc_args_t& args, const hpmc_implicit_args_t& im
             assert(args.d_reject_in);
             assert(args.d_reject_out);
             assert(implicit_args.d_n_depletants);
+            assert(args.d_type_params);
 
             hipLaunchKernelGGL((kernel::hpmc_insert_depletants<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>),
                 dim3(grid), dim3(threads), shared_bytes, implicit_args.streams[idev],
@@ -782,7 +784,8 @@ void depletants_launcher(const hpmc_args_t& args, const hpmc_implicit_args_t& im
                                  implicit_args.repulsive,
                                  range.first,
                                  max_depletant_queue_size,
-                                 implicit_args.d_n_depletants);
+                                 implicit_args.d_n_depletants,
+                                 args.d_type_params);
             }
         }
     else

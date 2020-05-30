@@ -15,6 +15,10 @@
 
 #include <pybind11/stl.h>
 
+#ifdef ENABLE_HIP
+#include <hip/hip_runtime.h>
+#endif
+
 using namespace std;
 namespace py = pybind11;
 
@@ -139,6 +143,8 @@ Autotuner::~Autotuner()
     hipEventDestroy(m_start);
     hipEventDestroy(m_stop);
     CHECK_CUDA_ERROR();
+    hipFree(d_params);
+    CHECK_CUDA_ERROR();
     #endif
     }
 
@@ -164,6 +170,9 @@ void Autotuner::initialize(const std::vector<std::vector<unsigned int> >& params
 
         m_current_param[n] = m_parameters[n][m_current_element[n]];
         }
+
+    hipMallocManaged(&d_params, sizeof(unsigned int)*m_parameters.size());
+    CHECK_CUDA_ERROR();
     }
 
 /*! \param enabled true to enable sampling, false to disable it
@@ -240,6 +249,12 @@ void Autotuner::begin()
     // if we are scanning, record a cuda event - otherwise do nothing
     if (attached || m_state == STARTUP || m_state == SCANNING)
         {
+        // sync up all GPUs so we can overwrite the parameters
+        m_exec_conf->multiGPUBarrier();
+        hipMemcpy(d_params, &m_current_param.front(),
+            sizeof(unsigned int)*m_parameters.size(),
+            hipMemcpyHostToDevice);
+
         hipEventRecord(m_start, 0);
         if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
             CHECK_CUDA_ERROR();
@@ -508,7 +523,7 @@ std::vector<unsigned int> Autotuner::computeOptimalParameter()
         {
         // now find the minimum times in the medians
         float min = m_sample_median.begin()->second;
-        std::vector< unsigned int > min_idx;
+        std::vector< unsigned int > min_idx = m_sample_median.begin()->first;
 
         for (auto elem: m_sample_median)
             {

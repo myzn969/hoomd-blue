@@ -135,6 +135,16 @@ class PYBIND11_EXPORT Autotuner
             return m_current_param[dim];
             }
 
+        //! Similar to getParam, but returns a pointer to the n parameters in managed memory
+        /*! The device data is valid until the the host code enters the next begin()/end() block.
+         *  A device synchronization is being performed at that point to ensure the kernel
+         *  sees the updated data. If no tuning is being performed, the device data remains valid.
+         */
+        unsigned int *getDeviceParams() const
+            {
+            return d_params;
+            }
+
         //! Enable/disable sampling
         /*! \param enabled true to enable sampling, false to disable it
         */
@@ -298,6 +308,8 @@ class PYBIND11_EXPORT Autotuner
         float m_last_sample;            //!< The last sample taken
         bool m_have_param;              //!< True if the tuner thread is waiting for a timing
         bool m_have_timing;             //!< True if we have a current timing value
+
+        unsigned int *d_params;         //!< Current parameters in managed memory
 
         // setup data structures
         void initialize(const std::vector<std::vector<unsigned int> >& params);

@@ -70,7 +70,8 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
                            const unsigned int max_extra_bytes,
                            const unsigned int max_queue_size,
                            const unsigned int work_offset,
-                           const unsigned int nwork)
+                           const unsigned int nwork,
+                           const unsigned int *d_type_params)
     {
     __shared__ unsigned int s_overlap_checks;
     __shared__ unsigned int s_overlap_err_count;
@@ -127,7 +128,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
 
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
-        s_params[cur_type].load_shared(s_extra, available_bytes);
+        s_params[cur_type].load_shared(s_extra, available_bytes, d_type_params[cur_type]);
     __syncthreads();
 
     if (master && group == 0)
@@ -438,7 +439,7 @@ void narrow_phase_launcher(const hpmc_args_t& args, const typename Shape::param_
         unsigned int available_bytes = max_extra_bytes;
         for (unsigned int i = 0; i < args.num_types; ++i)
             {
-            params[i].allocate_shared(ptr, available_bytes);
+            params[i].load_shared(ptr, available_bytes, args.d_type_params[i]);
             }
         unsigned int extra_bytes = max_extra_bytes - available_bytes;
         shared_bytes += extra_bytes;
@@ -465,6 +466,7 @@ void narrow_phase_launcher(const hpmc_args_t& args, const typename Shape::param_
             assert(args.d_reject_in);
             assert(args.d_reject_out);
             assert(args.d_reject_out_of_cell);
+            assert(args.d_type_params);
 
             hipLaunchKernelGGL((hpmc_narrow_phase<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE>),
                 grid, thread, shared_bytes, args.streams[idev],
@@ -473,7 +475,7 @@ void narrow_phase_launcher(const hpmc_args_t& args, const typename Shape::param_
                 args.d_counters+idev*args.counters_pitch, args.num_types,
                 args.box, args.ghost_width, args.cell_dim, args.ci, args.N, args.d_check_overlaps,
                 args.overlap_idx, params, args.d_update_order_by_ptl, args.d_reject_in, args.d_reject_out, args.d_reject_out_of_cell,
-                max_extra_bytes, max_queue_size, range.first, nwork);
+                max_extra_bytes, max_queue_size, range.first, nwork, args.d_type_params);
             }
         }
     else

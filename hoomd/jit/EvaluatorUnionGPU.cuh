@@ -32,29 +32,34 @@ union_params_t
     //! Load dynamic data members into shared memory and increase pointer
     /*! \param ptr Pointer to load data to (will be incremented)
         \param available_bytes Size of remaining shared memory allocation
+        \param load_shared mask bitmask to indicate which arrays we should load
      */
-    DEVICE void load_shared(char *& ptr, unsigned int &available_bytes)
+    HOSTDEVICE void load_shared(char *& ptr, unsigned int &available_bytes,
+                                unsigned int mask) const
         {
-        tree.load_shared(ptr, available_bytes);
-        mpos.load_shared(ptr, available_bytes);
-        morientation.load_shared(ptr, available_bytes);
-        mdiameter.load_shared(ptr, available_bytes);
-        mcharge.load_shared(ptr, available_bytes);
-        mtype.load_shared(ptr, available_bytes);
+        const unsigned int tree_bits = tree.getTuningBits();
+        tree.load_shared(ptr, available_bytes, mask & ((1 << tree_bits)-1));
+        mask >>= tree_bits;
+
+        if (mask & 1)
+            mpos.load_shared(ptr, available_bytes);
+
+        if (mask & 2)
+            morientation.load_shared(ptr, available_bytes);
+
+        if (mask & 4)
+            mdiameter.load_shared(ptr, available_bytes);
+
+        if (mask & 8)
+            mcharge.load_shared(ptr, available_bytes);
+
+        if (mask & 16)
+            mtype.load_shared(ptr, available_bytes);
         }
 
-    //! Determine size of the shared memory allocaation
-    /*! \param ptr Pointer to increment
-        \param available_bytes Size of remaining shared memory allocation
-     */
-    HOSTDEVICE void allocate_shared(char *& ptr, unsigned int &available_bytes) const
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        tree.allocate_shared(ptr, available_bytes);
-        mpos.allocate_shared(ptr, available_bytes);
-        morientation.allocate_shared(ptr, available_bytes);
-        mdiameter.allocate_shared(ptr, available_bytes);
-        mcharge.allocate_shared(ptr, available_bytes);
-        mtype.allocate_shared(ptr, available_bytes);
+        return hpmc::detail::GPUTree::getTuningBits() + 5;
         }
 
     #ifdef ENABLE_HIP

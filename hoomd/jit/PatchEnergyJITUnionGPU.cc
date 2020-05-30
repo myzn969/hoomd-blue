@@ -71,13 +71,15 @@ void PatchEnergyJITUnionGPU::computePatchEnergyGPU(const gpu_args_t& args, hipSt
     assert(args.d_postype);
     assert(args.d_orientation);
 
-    unsigned int param = m_tuner_narrow_patch->getParam();
+    unsigned int param = m_tuner_narrow_patch->getParam(0);
     unsigned int block_size = param/1000000;
     unsigned int req_tpp = (param%1000000)/100;
     unsigned int eval_threads = param % 100;
 
     this->m_exec_conf->beginMultiGPU();
     m_tuner_narrow_patch->begin();
+
+    const unsigned int *d_type_params = m_tuner_narrow_patch->getDeviceParams()+1;
 
     // choose a block size based on the max block size by regs (max_block_size) and include dynamic shared memory usage
     unsigned int run_block_size = std::min(block_size, m_gpu_factory.getKernelMaxThreads(0, eval_threads, block_size)); // fixme GPU 0
@@ -134,7 +136,7 @@ void PatchEnergyJITUnionGPU::computePatchEnergyGPU(const gpu_args_t& args, hipSt
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int i = 0; i < m_d_union_params.size(); ++i)
         {
-        m_d_union_params[i].allocate_shared(ptr, available_bytes);
+        m_d_union_params[i].load_shared(ptr, available_bytes, d_type_params[i]);
         }
     unsigned int extra_bytes = max_extra_bytes - available_bytes;
     shared_bytes += extra_bytes;
@@ -183,7 +185,8 @@ void PatchEnergyJITUnionGPU::computePatchEnergyGPU(const gpu_args_t& args, hipSt
             max_queue_size,
             range.first,
             nwork,
-            max_extra_bytes);
+            max_extra_bytes,
+            d_type_params);
 
         if (res != CUDA_SUCCESS)
             {
