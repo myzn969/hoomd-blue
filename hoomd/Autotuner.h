@@ -317,6 +317,7 @@ class PYBIND11_EXPORT Autotuner
         bool m_have_timing;             //!< True if we have a current timing value
 
         unsigned int *d_params;         //!< Current parameters in managed memory
+        bool m_cur_params_on_device;    //!< True if the device params are current
 
         // setup data structures
         void initialize(const std::vector<std::vector<unsigned int> >& params);

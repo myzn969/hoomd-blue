@@ -41,7 +41,7 @@ Autotuner::Autotuner(const std::vector<unsigned int>& parameters,
     : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name),
       m_state(STARTUP), m_current_sample(0),  m_calls(0),
       m_exec_conf(exec_conf), m_mode(mode_median),
-      m_attached(false), m_have_param(false), m_have_timing(false)
+      m_attached(false), m_have_param(false), m_have_timing(false), m_cur_params_on_device(false)
     {
     m_exec_conf->msg->notice(5) << "Constructing Autotuner " << nsamples << " " << period << " " << name << endl;
 
@@ -74,7 +74,7 @@ Autotuner::Autotuner(const std::vector< std::vector<unsigned int> >& parameters,
     : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name),
       m_state(STARTUP), m_current_sample(0), m_calls(0),
       m_exec_conf(exec_conf), m_mode(mode_median),
-      m_attached(false), m_have_param(false), m_have_timing(false)
+      m_attached(false), m_have_param(false), m_have_timing(false), m_cur_params_on_device(false)
     {
     m_exec_conf->msg->notice(5) << "Constructing Autotuner " << nsamples << " " << period << " " << name << endl;
 
@@ -110,7 +110,7 @@ Autotuner::Autotuner(unsigned int start,
     : m_nsamples(nsamples), m_period(period), m_enabled(true), m_name(name),
       m_state(STARTUP), m_current_sample(0), m_calls(0),
       m_current_param(0), m_exec_conf(exec_conf), m_mode(mode_median), m_attached(false),
-      m_have_param(false), m_have_timing(false)
+      m_have_param(false), m_have_timing(false), m_cur_params_on_device(false)
     {
     m_exec_conf->msg->notice(5) << "Constructing Autotuner " << " " << start << " " << end << " " << step << " "
                                 << nsamples << " " << period << " " << name << endl;
@@ -225,29 +225,42 @@ void Autotuner::begin()
     bool enabled = m_enabled;
     bool attached = m_attached;
 
-    // skip if disabled
-    if (!enabled && !attached)
-        return;
-
     if (attached)
         {
         // wait until we have a new parameter value
         std::unique_lock<std::mutex> lk(m_mutex);
         m_cv.wait(lk, [=]{return m_have_param;});
         if (m_attached)
+            {
             m_have_param = false;
+            }
+
+        m_cur_params_on_device = false;
         }
 
     #ifdef ENABLE_HIP
-    // if we are scanning, record a cuda event - otherwise do nothing
-    if (attached || m_state == STARTUP || m_state == SCANNING)
+    if (!m_cur_params_on_device)
         {
         // sync up all GPUs so we can overwrite the parameters
         m_exec_conf->multiGPUBarrier();
         hipMemcpy(d_params, &m_current_param.front(),
             sizeof(unsigned int)*m_parameters.size(),
             hipMemcpyHostToDevice);
+        if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
+            CHECK_CUDA_ERROR();
+        m_cur_params_on_device = true;
+        }
+    #endif
 
+    // skip if disabled
+    if (!enabled && !attached)
+        return;
+
+    #ifdef ENABLE_HIP
+    // if we are scanning, record a cuda event - otherwise do nothing
+    if (attached || m_state == STARTUP || m_state == SCANNING)
+        {
+        m_cur_params_on_device = false;
         hipEventRecord(m_start, 0);
         if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
             CHECK_CUDA_ERROR();
