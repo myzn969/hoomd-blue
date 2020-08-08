@@ -3,6 +3,8 @@
 
 #include "IntegratorHPMCMonoGPUTypes.cuh"
 #include "hoomd/GPUPartition.cuh"
+#include "hoomd/RandomNumbers.h"
+#include "hoomd/RNGIdentifiers.h"
 
 namespace hpmc
 {
@@ -110,41 +112,217 @@ __global__ void hpmc_shift(Scalar4 *d_postype,
     d_image[my_pidx] = image;
     }
 
-//!< Kernel to evaluate convergence
-__global__ void hpmc_check_convergence(
+//!< Kernel to accept/reject
+__global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_trial_move_type,
                  const unsigned int *d_reject_out_of_cell,
-                 unsigned int *d_reject_in,
+                 unsigned int *d_reject,
                  unsigned int *d_reject_out,
-                 unsigned int *d_condition,
+                 const unsigned int *d_nneigh,
+                 const unsigned int *d_nlist,
+                 const unsigned int N_old,
+                 const unsigned int N,
                  const unsigned int nwork,
-                 const unsigned work_offset)
+                 const unsigned work_offset,
+                 const unsigned int maxn,
+                 bool patch,
+                 const unsigned int *d_nlist_patch_old,
+                 const unsigned int *d_nlist_patch_new,
+                 const unsigned int *d_nneigh_patch_old,
+                 const unsigned int *d_nneigh_patch_new,
+                 const float *d_energy_old,
+                 const float *d_energy_new,
+                 const unsigned int maxn_patch,
+                 unsigned int *d_condition,
+                 const unsigned int seed,
+                 const unsigned int select,
+                 const unsigned int timestep)
     {
+    unsigned offset = threadIdx.x;
+    unsigned int group_size = blockDim.x;
+    unsigned int group = threadIdx.y;
+    unsigned int n_groups = blockDim.y;
+    bool master = offset == 0;
+
     // the particle we are handling
-    unsigned int work_idx = blockIdx.x*blockDim.x + threadIdx.x;
-    if (work_idx >= nwork)
-        return;
-    unsigned int i = work_idx + work_offset;
+    unsigned int i = blockIdx.x*n_groups + group;
+    bool active = true;
+    if (i >= nwork)
+        active = false;
+    i += work_offset;
 
-    // is this particle considered?
-    bool move_active = d_trial_move_type[i] > 0;
+    extern __shared__ char sdata[];
 
-    // combine with reject flag from gen_moves for particles which are always rejected
-    bool reject_out_of_cell = d_reject_out_of_cell[i];
-    bool reject = d_reject_out[i];
+    float *s_energy_old = (float *) sdata;
+    float *s_energy_new = (float *) (s_energy_old + n_groups);
+    unsigned int *s_reject = (unsigned int *) (s_energy_new + n_groups);
 
-    // did the answer change since the last iteration?
-    if (move_active && !reject_out_of_cell && reject != d_reject_in[i])
+    bool move_active = false;
+    if (active && master)
         {
-        // flag that we're not done yet (a trivial race condition upon write)
-        *d_condition = 1;
+        s_reject[group] = d_reject_out_of_cell[i];
+        s_energy_old[group] = 0.0f;
+        s_energy_new[group] = 0.0f;
         }
 
-    // update the reject flags
-    d_reject_out[i] = reject || reject_out_of_cell;
+    if (active)
+        {
+        move_active = d_trial_move_type[i] > 0;
+        }
 
-    // clear input
-    d_reject_in[i] = reject_out_of_cell;
+    __syncthreads();
+
+    if (active && move_active)
+        {
+        unsigned int update_order_i = d_update_order_by_ptl[i];
+
+        // iterate over overlapping neighbors in old configuration
+        unsigned int nneigh = d_nneigh[i];
+        bool accept = true;
+        for (unsigned int cur_neigh = offset; cur_neigh < nneigh; cur_neigh += group_size)
+            {
+            unsigned int primitive = d_nlist[cur_neigh+maxn*i];
+
+            unsigned int j = primitive;
+            bool old = true;
+            if (j >= N_old)
+                {
+                j -= N_old;
+                old = false;
+                }
+
+            // has j been updated? ghost particles are not updated
+            bool j_has_been_updated = j < N && d_trial_move_type[j]
+                && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
+
+            // acceptance, reject if current configuration of particle overlaps
+            if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
+                {
+                accept = false;
+                break;
+                }
+
+            } // end loop over neighbors
+
+        if (!accept)
+            {
+            atomicMax(&s_reject[group], 1);
+            }
+
+        if (patch)
+            {
+            // iterate over overlapping neighbors in old configuration
+            float energy_old = 0.0f;
+            unsigned int nneigh = d_nneigh_patch_old[i];
+            bool evaluated = false;
+            for (unsigned int cur_neigh = offset; cur_neigh < nneigh; cur_neigh += group_size)
+                {
+                unsigned int primitive = d_nlist_patch_old[cur_neigh+maxn_patch*i];
+
+                unsigned int j = primitive;
+                bool old = true;
+                if (j >= N_old)
+                    {
+                    j -= N_old;
+                    old = false;
+                    }
+
+                // has j been updated? ghost particles are not updated
+                bool j_has_been_updated = j < N && d_trial_move_type[j]
+                    && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
+
+                if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
+                    {
+                    energy_old += d_energy_old[cur_neigh+maxn_patch*i];
+                    evaluated = true;
+                    }
+
+                } // end loop over neighbors
+
+            if (evaluated)
+                atomicAdd(&s_energy_old[group], energy_old);
+
+            // iterate over overlapping neighbors in new configuration
+            float energy_new = 0.0f;
+            nneigh = d_nneigh_patch_new[i];
+            evaluated = false;
+            for (unsigned int cur_neigh = offset; cur_neigh < nneigh; cur_neigh += group_size)
+                {
+                unsigned int primitive = d_nlist_patch_new[cur_neigh+maxn_patch*i];
+
+                unsigned int j = primitive;
+                bool old = true;
+                if (j >= N_old)
+                    {
+                    j -= N_old;
+                    old = false;
+                    }
+
+                // has j been updated? ghost particles are not updated
+                bool j_has_been_updated = j < N && d_trial_move_type[j]
+                    && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
+
+                if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
+                    {
+                    energy_new += d_energy_new[cur_neigh+maxn_patch*i];
+                    evaluated = true;
+                    }
+
+                } // end loop over neighbors
+
+            if (evaluated)
+                atomicAdd(&s_energy_new[group], energy_new);
+            }
+        } // end if (active && move_active)
+
+    __syncthreads();
+
+    if (master && active && move_active)
+        {
+        float delta_U = s_energy_new[group] - s_energy_old[group];
+
+        // Metropolis-Hastings
+        hoomd::RandomGenerator rng_i(hoomd::RNGIdentifier::HPMCMonoAccept, seed, i, select, timestep);
+        bool accept = !s_reject[group] && (!patch || (hoomd::detail::generate_canonical<double>(rng_i) < slow::exp(-delta_U)));
+
+        if ((accept && d_reject[i]) || (!accept && !d_reject[i]))
+            {
+            // flag that we're not done yet (a trivial race condition upon write)
+            *d_condition = 1;
+            }
+
+        // write out to device memory
+        d_reject_out[i] = accept ? 0 : 1;
+        }
+    }
+
+//! Generate number of depletants per particle
+__global__ void generate_num_depletants(const unsigned int seed,
+                                        const unsigned int timestep,
+                                        const unsigned int select,
+                                        const unsigned int num_types,
+                                        const unsigned int depletant_type_a,
+                                        const unsigned int depletant_type_b,
+                                        const Index2D depletant_idx,
+                                        const unsigned int work_offset,
+                                        const unsigned int nwork,
+                                        const Scalar *d_lambda,
+                                        const Scalar4 *d_postype,
+                                        unsigned int *d_n_depletants)
+    {
+    unsigned int idx = threadIdx.x + blockDim.x*blockIdx.x;
+
+    if (idx >= nwork)
+        return;
+
+    idx += work_offset;
+
+    hoomd::RandomGenerator rng_poisson(hoomd::RNGIdentifier::HPMCDepletantNum, idx, seed, timestep,
+        select*depletant_idx.getNumElements() + depletant_idx(depletant_type_a,depletant_type_b));
+    Index2D typpair_idx(num_types);
+    unsigned int type_i = __scalar_as_int(d_postype[idx].w);
+    d_n_depletants[idx] = hoomd::PoissonDistribution<Scalar>(
+        d_lambda[type_i*depletant_idx.getNumElements()+depletant_idx(depletant_type_a,depletant_type_b)])(rng_poisson);
     }
 } // end namespace kernel
 
@@ -218,44 +396,87 @@ void hpmc_shift(Scalar4 *d_postype,
     hipDeviceSynchronize();
     }
 
-void hpmc_check_convergence(const unsigned int *d_trial_move_type,
+
+void hpmc_accept(const unsigned int *d_update_order_by_ptl,
+                 const unsigned int *d_trial_move_type,
                  const unsigned int *d_reject_out_of_cell,
-                 unsigned int *d_reject_in,
+                 unsigned int *d_reject,
                  unsigned int *d_reject_out,
-                 unsigned int *d_condition,
+                 const unsigned int *d_nneigh,
+                 const unsigned int *d_nlist,
+                 const unsigned int N_old,
+                 const unsigned int N,
                  const GPUPartition& gpu_partition,
-                 const unsigned int block_size)
+                 const unsigned int maxn,
+                 bool patch,
+                 const unsigned int *d_nlist_patch_old,
+                 const unsigned int *d_nlist_patch_new,
+                 const unsigned int *d_nneigh_patch_old,
+                 const unsigned int *d_nneigh_patch_new,
+                 const float *d_energy_old,
+                 const float *d_energy_new,
+                 const unsigned int maxn_patch,
+                 unsigned int *d_condition,
+                 const unsigned int seed,
+                 const unsigned int select,
+                 const unsigned int timestep,
+                 const unsigned int block_size,
+                 const unsigned int tpp)
     {
     // determine the maximum block size and clamp the input block size down
     static int max_block_size = -1;
     if (max_block_size == -1)
         {
         hipFuncAttributes attr;
-        hipFuncGetAttributes(&attr, reinterpret_cast<const void*>(kernel::hpmc_check_convergence));
+        hipFuncGetAttributes(&attr, reinterpret_cast<const void*>(kernel::hpmc_accept));
         max_block_size = attr.maxThreadsPerBlock;
         }
 
     // setup the grid to run the kernel
     unsigned int run_block_size = min(block_size, (unsigned int)max_block_size);
 
-    dim3 threads(run_block_size, 1, 1);
+    // threads per particle
+    unsigned int cur_tpp = min(run_block_size,tpp);
+    while (run_block_size % cur_tpp != 0)
+        cur_tpp--;
+
+    unsigned int n_groups = run_block_size/cur_tpp;
+    dim3 threads(cur_tpp, n_groups, 1);
 
     for (int idev = gpu_partition.getNumActiveGPUs() - 1; idev >= 0; --idev)
         {
         auto range = gpu_partition.getRangeAndSetGPU(idev);
 
         unsigned int nwork = range.second - range.first;
-        const unsigned int num_blocks = nwork/run_block_size + 1;
+        const unsigned int num_blocks = nwork/n_groups + 1;
         dim3 grid(num_blocks, 1, 1);
 
-        hipLaunchKernelGGL(kernel::hpmc_check_convergence, grid, threads, 0, 0,
+        unsigned int shared_bytes = n_groups * (2*sizeof(float) + sizeof(unsigned int));
+        hipLaunchKernelGGL(kernel::hpmc_accept, grid, threads, shared_bytes, 0,
+            d_update_order_by_ptl,
             d_trial_move_type,
             d_reject_out_of_cell,
-            d_reject_in,
+            d_reject,
             d_reject_out,
-            d_condition,
+            d_nneigh,
+            d_nlist,
+            N_old,
+            N,
             nwork,
-            range.first);
+            range.first,
+            maxn,
+            patch,
+            d_nlist_patch_old,
+            d_nlist_patch_new,
+            d_nneigh_patch_old,
+            d_nneigh_patch_new,
+            d_energy_old,
+            d_energy_new,
+            maxn_patch,
+            d_condition,
+            seed,
+            select,
+            timestep);
         }
     }
 

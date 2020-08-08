@@ -49,23 +49,24 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
                            const Scalar4 *d_orientation,
                            const Scalar4 *d_trial_postype,
                            const Scalar4 *d_trial_orientation,
-                           const unsigned int *d_trial_move_type,
                            const unsigned int *d_excell_idx,
                            const unsigned int *d_excell_size,
                            const Index2D excli,
+                           unsigned int *d_nlist,
+                           unsigned int *d_nneigh,
+                           const unsigned int maxn,
                            hpmc_counters_t *d_counters,
                            const unsigned int num_types,
                            const BoxDim box,
                            const Scalar3 ghost_width,
                            const uint3 cell_dim,
                            const Index3D ci,
-                           const unsigned int N_local,
+                           const unsigned int N_old,
+                           const unsigned int N_new,
                            const unsigned int *d_check_overlaps,
                            const Index2D overlap_idx,
                            const typename Shape::param_type *d_params,
-                           const unsigned int *d_update_order_by_ptl,
-                           const unsigned int *d_reject_in,
-                           unsigned int *d_reject_out,
+                           unsigned int *d_overflow,
                            const unsigned int *d_reject_out_of_cell,
                            const unsigned int max_extra_bytes,
                            const unsigned int max_queue_size,
@@ -93,7 +94,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
     unsigned int *s_queue_j =   (unsigned int*)(s_check_overlaps + overlap_idx.getNumElements());
     unsigned int *s_queue_gid = (unsigned int*)(s_queue_j + max_queue_size);
     unsigned int *s_type_group = (unsigned int*)(s_queue_gid + max_queue_size);
-    unsigned int *s_reject_group = (unsigned int*)(s_type_group + n_groups);
+    unsigned int *s_idx_group = (unsigned int*)(s_type_group + n_groups);
 
         {
         // copy over parameters one int per thread for fast loads
@@ -123,7 +124,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
     __syncthreads();
 
     // initialize extra shared mem
-    char *s_extra = (char *)(s_reject_group + n_groups);
+    char *s_extra = (char *)(s_idx_group + n_groups);
 
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
@@ -154,7 +155,6 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
     if (active && d_reject_out_of_cell[idx])
         active = false;
 
-    unsigned int update_order_i;
     if (active)
         {
         Scalar4 postype_i(d_trial_postype[idx]);
@@ -166,22 +166,13 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
         my_cell = computeParticleCell(vec_to_scalar3(pos_i_old), box, ghost_width,
             cell_dim, ci, false);
 
-        // the order of this particle in the chain
-        update_order_i = d_update_order_by_ptl[idx];
-
         if (master)
             {
             s_pos_group[group] = make_scalar3(pos_i.x, pos_i.y, pos_i.z);
             s_type_group[group] = type_i;
             s_orientation_group[group] = d_trial_orientation[idx];
+            s_idx_group[group] = idx;
             }
-        }
-
-    if (master && active)
-        {
-        // load from output, this race condition is intentional and implements an
-        // optional early exit flag between concurrently running kernels
-        s_reject_group[group] = atomicCAS(&d_reject_out[idx], 0, 0);
         }
 
      // sync so that s_postype_group and s_orientation are available before other threads might process overlap checks
@@ -195,7 +186,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
     if (active)
         {
         excell_size = d_excell_size[my_cell];
-        overlap_checks += excell_size;
+        overlap_checks += 2*excell_size;
         }
 
     // loop while still searching
@@ -206,50 +197,40 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
         // loop through particles in the excell list and add them to the queue if they pass the circumsphere check
 
         // active threads add to the queue
-        if (active && !s_reject_group[group] && threadIdx.x == 0)
+        if (active && threadIdx.x == 0)
             {
             // prefetch j
             unsigned int j, next_j = 0;
-            if (k < excell_size)
+            if ((k >> 1) < excell_size)
                 {
-                next_j = __ldg(&d_excell_idx[excli(k, my_cell)]);
+                next_j = __ldg(&d_excell_idx[excli(k >> 1, my_cell)]);
                 }
 
             // add to the queue as long as the queue is not full, and we have not yet reached the end of our own list
             // and as long as no overlaps have been found
 
             // every thread can add at most one element to the neighbor list
-            while (s_queue_size < max_queue_size && k < excell_size)
+            while (s_queue_size < max_queue_size && (k >> 1) < excell_size)
                 {
                 // build some shapes, but we only need them to get diameters, so don't load orientations
                 // build shape i from shared memory
                 vec3<Scalar> pos_i(s_pos_group[group]);
                 Shape shape_i(quat<Scalar>(), s_params[s_type_group[group]]);
 
+                bool old = k & 1;
 
                 // prefetch next j
                 j = next_j;
                 k += group_size;
-                if (k < excell_size)
+                if ((k >> 1) < excell_size)
                     {
-                    next_j = __ldg(&d_excell_idx[excli(k, my_cell)]);
+                    next_j = __ldg(&d_excell_idx[excli(k >> 1, my_cell)]);
                     }
-
-                // has j been updated? ghost particles are not updated
-
-                // these multiple gmem loads present a minor optimization opportunity for the future
-                bool j_has_been_updated = j < N_local &&
-                    d_update_order_by_ptl[j] < update_order_i &&
-                    !d_reject_in[j] &&
-                    d_trial_move_type[j];
-
-                // true if particle j is in the old configuration
-                bool old = !j_has_been_updated;
 
                 // check particle circumspheres
 
                 // load particle j (always load ghosts from particle data)
-                const Scalar4 postype_j = (old || j >= N_local) ? d_postype[j] : d_trial_postype[j];
+                const Scalar4 postype_j = (old || j >= N_new) ? d_postype[j] : d_trial_postype[j];
                 unsigned int type_j = __scalar_as_int(postype_j.w);
                 vec3<Scalar> pos_j(postype_j);
                 Shape shape_j(quat<Scalar>(), s_params[type_j]);
@@ -258,7 +239,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
                 vec3<Scalar> r_ij = pos_j - pos_i;
                 r_ij = box.minImage(r_ij);
 
-                if (idx != j && (old || j < N_local)
+                if (idx != j && (old || j < N_new)
                     && check_circumsphere_overlap(r_ij, shape_i, shape_j))
                     {
                     // add this particle to the queue
@@ -276,7 +257,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
                         k -= group_size;
                         }
                     }
-                } // end while (s_queue_size < max_queue_size && k < excell_size)
+                } // end while (s_queue_size < max_queue_size && (k>>1) < excell_size)
             } // end if active
 
         // sync to make sure all threads in the block are caught up
@@ -323,7 +304,13 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
             if (s_check_overlaps[overlap_idx(type_i, type_j)]
                 && test_overlap(r_ij, shape_i, shape_j, overlap_err_count))
                 {
-                atomicAdd(&s_reject_group[check_group],1);
+                // write out to global memory
+                unsigned int i = s_idx_group[check_group];
+                unsigned int n = atomicAdd(&d_nneigh[i], 1);
+                if (n < maxn)
+                    {
+                    d_nlist[n+maxn*i] = check_old ? check_j : (check_j + N_old);
+                    }
                 }
             }
 
@@ -332,7 +319,7 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
         if (master && group == 0)
             s_queue_size = 0;
 
-        if (active && (threadIdx.x == 0) && !s_reject_group[group] && k < excell_size)
+        if (active && (threadIdx.x == 0) && (k >> 1) < excell_size)
             atomicAdd(&s_still_searching, 1);
 
         __syncthreads();
@@ -340,9 +327,16 @@ __global__ void hpmc_narrow_phase(const Scalar4 *d_postype,
 
     if (active && master)
         {
-        // update reject flags in global mem
-        if (s_reject_group[group])
-            atomicAdd(&d_reject_out[idx], 1);
+        // overflowed?
+        unsigned int nneigh = d_nneigh[idx];
+        if (nneigh > maxn)
+            {
+            #if (__CUDA_ARCH__ >= 600)
+            atomicMax_system(d_overflow, nneigh);
+            #else
+            atomicMax(d_overflow, nneigh);
+            #endif
+            }
         }
 
     if (master)
@@ -371,8 +365,6 @@ template< class Shape, unsigned int cur_launch_bounds >
 void narrow_phase_launcher(const hpmc_args_t& args, const typename Shape::param_type *params,
     unsigned int max_threads, detail::int2type<cur_launch_bounds>)
     {
-    assert(params);
-
     if (max_threads == cur_launch_bounds*MIN_BLOCK_SIZE)
         {
         // determine the maximum block size and clamp the input block size down
@@ -460,19 +452,20 @@ void narrow_phase_launcher(const hpmc_args_t& args, const typename Shape::param_
             assert(args.d_trial_orientation);
             assert(args.d_excell_idx);
             assert(args.d_excell_size);
+            assert(args.d_nlist);
+            assert(args.d_nneigh);
             assert(args.d_counters);
             assert(args.d_check_overlaps);
-            assert(args.d_reject_in);
-            assert(args.d_reject_out);
+            assert(args.d_overflow);
             assert(args.d_reject_out_of_cell);
 
             hipLaunchKernelGGL((hpmc_narrow_phase<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE>),
                 grid, thread, shared_bytes, args.streams[idev],
                 args.d_postype, args.d_orientation, args.d_trial_postype, args.d_trial_orientation,
-                args.d_trial_move_type, args.d_excell_idx, args.d_excell_size, args.excli,
-                args.d_counters+idev*args.counters_pitch, args.num_types,
-                args.box, args.ghost_width, args.cell_dim, args.ci, args.N, args.d_check_overlaps,
-                args.overlap_idx, params, args.d_update_order_by_ptl, args.d_reject_in, args.d_reject_out, args.d_reject_out_of_cell,
+                args.d_excell_idx, args.d_excell_size, args.excli,
+                args.d_nlist, args.d_nneigh, args.maxn, args.d_counters+idev*args.counters_pitch, args.num_types,
+                args.box, args.ghost_width, args.cell_dim, args.ci, args.N + args.N_ghost, args.N, args.d_check_overlaps,
+                args.overlap_idx, params, args.d_overflow, args.d_reject_out_of_cell,
                 max_extra_bytes, max_queue_size, range.first, nwork);
             }
         }

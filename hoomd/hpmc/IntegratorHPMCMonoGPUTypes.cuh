@@ -20,15 +20,16 @@ namespace gpu {
 struct hpmc_args_t
     {
     //! Construct a hpmc_args_t
-    hpmc_args_t(const Scalar4 *_d_postype,
-                const Scalar4 *_d_orientation,
-                const Scalar4 *_d_vel,
+    hpmc_args_t(Scalar4 *_d_postype,
+                Scalar4 *_d_orientation,
+                Scalar4 *_d_vel,
                 hpmc_counters_t *_d_counters,
                 const unsigned int _counters_pitch,
                 const Index3D& _ci,
                 const uint3& _cell_dim,
                 const Scalar3& _ghost_width,
                 const unsigned int _N,
+                const unsigned int _N_ghost,
                 const unsigned int _num_types,
                 const unsigned int _seed,
                 const Scalar* _d,
@@ -45,7 +46,7 @@ struct hpmc_args_t
                 const unsigned int _block_size,
                 const unsigned int _tpp,
                 const unsigned int _overlap_threads,
-                const bool _have_auxilliary_variable,
+                const bool _have_auxiliary_variables,
                 unsigned int *_d_reject_out_of_cell,
                 Scalar4 *_d_trial_postype,
                 Scalar4 *_d_trial_orientation,
@@ -55,8 +56,10 @@ struct hpmc_args_t
                 unsigned int *_d_excell_idx,
                 const unsigned int *_d_excell_size,
                 const Index2D& _excli,
-                const unsigned int *_d_reject_in,
-                unsigned int *_d_reject_out,
+                unsigned int *_d_nlist,
+                unsigned int *_d_nneigh,
+                const unsigned int _maxn,
+                unsigned int *_d_overflow,
                 const hipDeviceProp_t &_devprop,
                 const GPUPartition& _gpu_partition,
                 const hipStream_t *_streams)
@@ -69,6 +72,7 @@ struct hpmc_args_t
                   cell_dim(_cell_dim),
                   ghost_width(_ghost_width),
                   N(_N),
+                  N_ghost(_N_ghost),
                   num_types(_num_types),
                   seed(_seed),
                   d_d(_d),
@@ -85,7 +89,7 @@ struct hpmc_args_t
                   block_size(_block_size),
                   tpp(_tpp),
                   overlap_threads(_overlap_threads),
-                  have_auxilliary_variable(_have_auxilliary_variable),
+                  have_auxiliary_variables(_have_auxiliary_variables),
                   d_reject_out_of_cell(_d_reject_out_of_cell),
                   d_trial_postype(_d_trial_postype),
                   d_trial_orientation(_d_trial_orientation),
@@ -95,23 +99,26 @@ struct hpmc_args_t
                   d_excell_idx(_d_excell_idx),
                   d_excell_size(_d_excell_size),
                   excli(_excli),
-                  d_reject_in(_d_reject_in),
-                  d_reject_out(_d_reject_out),
+                  d_nlist(_d_nlist),
+                  d_nneigh(_d_nneigh),
+                  maxn(_maxn),
+                  d_overflow(_d_overflow),
                   devprop(_devprop),
                   gpu_partition(_gpu_partition),
                   streams(_streams)
         {
         };
 
-    const Scalar4 *d_postype;         //!< postype array
-    const Scalar4 *d_orientation;     //!< orientation array
-    const Scalar4 *d_vel;             //!< velocities array (used to store auxilliary variables)
+    Scalar4 *d_postype;               //!< postype array
+    Scalar4 *d_orientation;           //!< orientation array
+    Scalar4 *d_vel;                   //!< Velocities (.w component is auxillary variable)
     hpmc_counters_t *d_counters;      //!< Move accept/reject counters
     const unsigned int counters_pitch;         //!< Pitch of 2D array counters per GPU
     const Index3D& ci;                //!< Cell indexer
     const uint3& cell_dim;            //!< Cell dimensions
     const Scalar3& ghost_width;       //!< Width of the ghost layer
     const unsigned int N;             //!< Number of particles
+    const unsigned int N_ghost;       //!< Number of ghost particles
     const unsigned int num_types;     //!< Number of particle types
     const unsigned int seed;          //!< RNG seed
     const Scalar* d_d;                //!< Maximum move displacement
@@ -128,18 +135,20 @@ struct hpmc_args_t
     unsigned int block_size;          //!< Block size to execute
     unsigned int tpp;                 //!< Threads per particle
     unsigned int overlap_threads;     //!< Number of parallel threads per overlap check
-    const bool have_auxilliary_variable; //!< True if we are using the velocity field to store auxilliary state information
+    const bool have_auxiliary_variables; //!< True if we have auxiliary variables for depletants
     unsigned int *d_reject_out_of_cell;//!< Set to one to reject particle move
     Scalar4 *d_trial_postype;         //!< New positions (and type) of particles
     Scalar4 *d_trial_orientation;     //!< New orientations of particles
-    Scalar4 *d_trial_vel;             //!< New velocities (auxilliary variables) of particles
+    Scalar4 *d_trial_vel;             //!< New auxiliary variables (velocites, w component)
     unsigned int *d_trial_move_type;  //!< per particle flag, whether it is a translation (1) or rotation (2), or inactive (0)
     const unsigned int *d_update_order_by_ptl;  //!< Lookup of update order by particle index
     unsigned int *d_excell_idx;       //!< Expanded cell list
     const unsigned int *d_excell_size;//!< Size of expanded cells
     const Index2D& excli;             //!< Excell indexer
-    const unsigned int *d_reject_in;  //!< Reject flags per particle (in)
-    unsigned int *d_reject_out;       //!< Reject flags per particle (out)
+    unsigned int *d_nlist;        //!< Neighbor list of overlapping particles after trial move
+    unsigned int *d_nneigh;       //!< Number of overlapping particles after trial move
+    unsigned int maxn;                //!< Width of neighbor list
+    unsigned int *d_overflow;         //!< Overflow condition for neighbor list
     const hipDeviceProp_t& devprop;     //!< CUDA device properties
     const GPUPartition& gpu_partition; //!< Multi-GPU partition
     const hipStream_t *streams;        //!< kernel streams
@@ -155,7 +164,7 @@ struct hpmc_update_args_t
         hpmc_counters_t *_d_counters,
         unsigned int _counters_pitch,
         const GPUPartition& _gpu_partition,
-        const bool _have_auxilliary_variable,
+        const bool _have_auxiliary_variable,
         const Scalar4 *_d_trial_postype,
         const Scalar4 *_d_trial_orientation,
         const Scalar4 *_d_trial_vel,
@@ -168,7 +177,7 @@ struct hpmc_update_args_t
           d_counters(_d_counters),
           counters_pitch(_counters_pitch),
           gpu_partition(_gpu_partition),
-          have_auxilliary_variable(_have_auxilliary_variable),
+          have_auxiliary_variable(_have_auxiliary_variable),
           d_trial_postype(_d_trial_postype),
           d_trial_orientation(_d_trial_orientation),
           d_trial_vel(_d_trial_vel),
@@ -184,7 +193,7 @@ struct hpmc_update_args_t
     hpmc_counters_t *d_counters;
     unsigned int counters_pitch;
     const GPUPartition& gpu_partition;
-    const bool have_auxilliary_variable;
+    const bool have_auxiliary_variable;
     const Scalar4 *d_trial_postype;
     const Scalar4 *d_trial_orientation;
     const Scalar4 *d_trial_vel;
@@ -226,15 +235,31 @@ void hpmc_shift(Scalar4 *d_postype,
                 const Scalar3 shift,
                 const unsigned int block_size);
 
-//! Kernel to evaluate convergence
-void hpmc_check_convergence(
-     const unsigned int *d_trial_move_type,
-     const unsigned int *d_reject_out_of_cell,
-     unsigned int *d_reject_in,
-     unsigned int *d_reject_out,
-     unsigned int *d_condition,
-     const GPUPartition& gpu_partition,
-     unsigned int block_size);
+void hpmc_accept(const unsigned int *d_update_order_by_ptl,
+                 const unsigned int *d_trial_move_type,
+                 const unsigned int *d_reject_out_of_cell,
+                 unsigned int *d_reject,
+                 unsigned int *d_reject_out,
+                 const unsigned int *d_nneigh,
+                 const unsigned int *d_nlist,
+                 const unsigned int N_old,
+                 const unsigned int N,
+                 const GPUPartition& gpu_partition,
+                 const unsigned int maxn,
+                 bool patch,
+                 const unsigned int *d_nlist_patch_old,
+                 const unsigned int *d_nlist_patch_new,
+                 const unsigned int *d_nneigh_patch_old,
+                 const unsigned int *d_nneigh_patch_new,
+                 const float *d_energy_old,
+                 const float *d_energy_new,
+                 const unsigned int maxn_patch,
+                 unsigned int *d_condition,
+                 const unsigned int seed,
+                 const unsigned int select,
+                 const unsigned int timestep,
+                 const unsigned int block_size,
+                 const unsigned int tpp);
 
 } // end namespace gpu
 

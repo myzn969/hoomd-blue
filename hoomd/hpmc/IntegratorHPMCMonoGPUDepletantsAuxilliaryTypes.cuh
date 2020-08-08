@@ -6,7 +6,7 @@
 #include <hip/hip_runtime.h>
 #include "hoomd/HOOMDMath.h"
 
-#include "IntegratorHPMCMonoGPUDepletants.cuh"
+#include "IntegratorHPMCMonoGPUDepletantsTypes.cuh"
 
 namespace hpmc {
 

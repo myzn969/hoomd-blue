@@ -676,6 +676,7 @@ void depletants_launcher_phase2(const hpmc_args_t& args,
     unsigned int max_threads,
     detail::int2type<cur_launch_bounds>)
     {
+    #if 0
     if (max_threads == cur_launch_bounds*MIN_BLOCK_SIZE)
         {
         // determine the maximum block size and clamp the input block size down
@@ -846,6 +847,7 @@ void depletants_launcher_phase2(const hpmc_args_t& args,
             max_threads,
             detail::int2type<cur_launch_bounds/2>());
         }
+    #endif
     }
 
 } // end namespace kernel
@@ -867,6 +869,7 @@ void hpmc_depletants_auxilliary_phase2(const hpmc_args_t& args,
                                        const hpmc_auxilliary_args_t& auxilliary_args,
                                        const typename Shape::param_type *params)
     {
+    #if 0
     // select the kernel template according to the next power of two of the block size
     unsigned int launch_bounds = MIN_BLOCK_SIZE;
     while (launch_bounds < args.block_size)
@@ -890,6 +893,7 @@ void hpmc_depletants_auxilliary_phase2(const hpmc_args_t& args,
             launch_bounds,
             detail::int2type<MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
         }
+    #endif
     }
 #endif
 
