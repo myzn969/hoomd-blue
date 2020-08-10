@@ -53,7 +53,8 @@ __global__ void hpmc_narrow_phase_patch(Scalar4 *d_postype,
                            const unsigned int max_queue_size,
                            const unsigned int work_offset,
                            const unsigned int nwork,
-                           const unsigned int max_extra_bytes)
+                           const unsigned int max_extra_bytes,
+                           const unsigned int *d_type_params)
     {
     __shared__ unsigned int s_queue_size;
     __shared__ unsigned int s_still_searching;
@@ -121,7 +122,7 @@ __global__ void hpmc_narrow_phase_patch(Scalar4 *d_postype,
 
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
-        s_params[cur_type].load_shared(s_extra, available_bytes);
+        s_params[cur_type].load_shared(s_extra, available_bytes, d_type_params[cur_type]);
 
     __syncthreads();
     #endif

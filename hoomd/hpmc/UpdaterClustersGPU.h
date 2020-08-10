@@ -67,6 +67,19 @@ class UpdaterClustersGPU : public UpdaterClusters<Shape>
             m_tuner_flip->setEnabled(enable);
             }
 
+        //! Return the list of autotuners
+        virtual std::vector<std::shared_ptr<Autotuner> > getAutotuners() const
+            {
+            std::vector<std::shared_ptr<Autotuner> > l;
+            l.push_back(m_tuner_excell_block_size);
+            l.push_back(m_tuner_overlaps);
+            l.push_back(m_tuner_depletants);
+            l.push_back(m_tuner_num_depletants);
+            l.push_back(m_tuner_concatenate);
+            l.push_back(m_tuner_transform);
+            l.push_back(m_tuner_flip);
+            return l;
+            }
         //! Take one timestep forward
         /*! \param timestep timestep at which update is being evaluated
         */
@@ -81,13 +94,13 @@ class UpdaterClustersGPU : public UpdaterClusters<Shape>
         uint3 m_last_dim;                                    //!< Dimensions of the cell list on the last call to update
         unsigned int m_last_nmax;                            //!< Last cell list NMax value allocated in excell
 
-        std::unique_ptr<Autotuner> m_tuner_excell_block_size;  //!< Autotuner for excell block_size
-        std::unique_ptr<Autotuner> m_tuner_overlaps;  //!< Autotuner for overlap checks
-        std::unique_ptr<Autotuner> m_tuner_depletants;       //!< Autotuner for inserting depletants
-        std::unique_ptr<Autotuner> m_tuner_num_depletants;   //!< Autotuner for calculating number of depletants
-        std::unique_ptr<Autotuner> m_tuner_concatenate;   //!< Autotuner for contenating the per-particle neighbor lists
-        std::unique_ptr<Autotuner> m_tuner_transform;     //!< Autotuner for transforming particles
-        std::unique_ptr<Autotuner> m_tuner_flip;          //!< Autotuner for flipping clusters
+        std::shared_ptr<Autotuner> m_tuner_excell_block_size;  //!< Autotuner for excell block_size
+        std::shared_ptr<Autotuner> m_tuner_overlaps;  //!< Autotuner for overlap checks
+        std::shared_ptr<Autotuner> m_tuner_depletants;       //!< Autotuner for inserting depletants
+        std::shared_ptr<Autotuner> m_tuner_num_depletants;   //!< Autotuner for calculating number of depletants
+        std::shared_ptr<Autotuner> m_tuner_concatenate;   //!< Autotuner for contenating the per-particle neighbor lists
+        std::shared_ptr<Autotuner> m_tuner_transform;     //!< Autotuner for transforming particles
+        std::shared_ptr<Autotuner> m_tuner_flip;          //!< Autotuner for flipping clusters
 
         GlobalArray<unsigned int> m_excell_idx;              //!< Particle indices in expanded cells
         GlobalArray<unsigned int> m_excell_size;             //!< Number of particles in each expanded cell
@@ -158,13 +171,13 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
     m_last_nmax = 0xffffffff;
 
     hipDeviceProp_t dev_prop = this->m_exec_conf->dev_prop;
-    m_tuner_excell_block_size.reset(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_excell_block_size", this->m_exec_conf));
-    m_tuner_num_depletants.reset(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_num_depletants", this->m_exec_conf));
-    m_tuner_transform.reset(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_transform", this->m_exec_conf));
-    m_tuner_flip.reset(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_flip", this->m_exec_conf));
+    m_tuner_excell_block_size = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_excell_block_size", this->m_exec_conf));
+    m_tuner_num_depletants = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_num_depletants", this->m_exec_conf));
+    m_tuner_transform = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_transform", this->m_exec_conf));
+    m_tuner_flip = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "clusters_flip", this->m_exec_conf));
 
     // tuning parameters for overlap checks
-    std::vector<unsigned int> valid_params;
+    std::vector< std::vector<unsigned int> > valid_params(1+this->m_pdata->getNTypes());
     unsigned int warp_size = this->m_exec_conf->dev_prop.warpSize;
     const unsigned int overlaps_max_tpp = dev_prop.maxThreadsDim[2];
     for (unsigned int block_size = warp_size; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += warp_size)
@@ -177,16 +190,22 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
                 if (t == 1 || Shape::isParallel())
                     {
                     if ((s*t <= block_size) && ((block_size % (s*t)) == 0))
-                        valid_params.push_back(block_size*1000000 + s*100 + t);
+                        valid_params[0].push_back(block_size*1000000 + s*100 + t);
                     }
                 }
             }
         }
 
-    m_tuner_overlaps.reset(new Autotuner(valid_params, 5, 100000, "clusters_overlaps", this->m_exec_conf));
+    unsigned int tuning_bits = Shape::getTuningBits();
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params[1+itype].push_back(param);
+        }
+    m_tuner_overlaps = std::shared_ptr<Autotuner>(new Autotuner(valid_params, 5, 100000, "clusters_overlaps", this->m_exec_conf));
 
     // tuning parameters for depletants
-    std::vector<unsigned int> valid_params_depletants;
+    std::vector< std::vector<unsigned int> > valid_params_depletants(1+this->m_pdata->getNTypes());
     for (unsigned int block_size = dev_prop.warpSize; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += dev_prop.warpSize)
         {
         for (unsigned int group_size=1; group_size <= overlaps_max_tpp; group_size*=2)
@@ -194,11 +213,16 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
             for (unsigned int depletants_per_thread=1; depletants_per_thread <= 32; depletants_per_thread*=2)
                 {
                 if ((block_size % group_size) == 0)
-                    valid_params_depletants.push_back(block_size*1000000 + depletants_per_thread*10000 + group_size);
+                    valid_params_depletants[0].push_back(block_size*1000000 + depletants_per_thread*10000 + group_size);
                 }
             }
         }
-    m_tuner_depletants.reset(new Autotuner(valid_params_depletants, 5, 100000, "clusters_depletants", this->m_exec_conf));
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params_depletants[1+itype].push_back(param);
+        }
+    m_tuner_depletants = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "clusters_depletants", this->m_exec_conf));
 
     // tuning parameters for nlist concatenation kernel
     std::vector<unsigned int> valid_params_concatenate;
@@ -211,7 +235,7 @@ UpdaterClustersGPU<Shape>::UpdaterClustersGPU(std::shared_ptr<SystemDefinition> 
                 valid_params_concatenate.push_back(block_size*10000 + group_size);
             }
         }
-    m_tuner_concatenate.reset(new Autotuner(valid_params_concatenate, 5, 100000, "clusters_concatenate", this->m_exec_conf));
+    m_tuner_concatenate = std::shared_ptr<Autotuner>(new Autotuner(valid_params_concatenate, 5, 100000, "clusters_concatenate", this->m_exec_conf));
 
     GlobalArray<unsigned int> excell_size(0, this->m_exec_conf);
     m_excell_size.swap(excell_size);
@@ -767,7 +791,9 @@ void UpdaterClustersGPU<Shape>::findInteractions(unsigned int timestep, const qu
                     true,
                     this->m_exec_conf->dev_prop,
                     m_old_gpu_partition,
-                    &m_overlaps_streams.front());
+                    &m_overlaps_streams.front(),
+                    0 // tuning
+                    );
 
                 this->m_exec_conf->beginMultiGPU();
 
@@ -788,10 +814,11 @@ void UpdaterClustersGPU<Shape>::findInteractions(unsigned int timestep, const qu
                  */
 
                 m_tuner_overlaps->begin();
-                unsigned int param = m_tuner_overlaps->getParam();
+                unsigned int param = m_tuner_overlaps->getParam(0);
                 args.block_size = param/1000000;
                 args.tpp = (param%1000000)/100;
                 args.overlap_threads = param%100;
+                args.d_type_params = m_tuner_overlaps->getDeviceParams()+1;
                 gpu::hpmc_cluster_overlaps<Shape>(args, params.data());
                 if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                     CHECK_CUDA_ERROR();
@@ -847,10 +874,11 @@ void UpdaterClustersGPU<Shape>::findInteractions(unsigned int timestep, const qu
 
                         // insert depletants on-the-fly
                         m_tuner_depletants->begin();
-                        unsigned int param = m_tuner_depletants->getParam();
+                        unsigned int param = m_tuner_depletants->getParam(0);
                         args.block_size = param/1000000;
                         unsigned int depletants_per_thread = (param % 1000000)/10000;
                         args.tpp = param%10000;
+                        args.d_type_params = m_tuner_depletants->getDeviceParams()+1;
 
                         gpu::hpmc_implicit_args_t implicit_args(
                             itype,
@@ -1029,6 +1057,7 @@ void export_UpdaterClustersGPU(pybind11::module& m, const std::string& name)
                          std::shared_ptr< IntegratorHPMCMono<Shape> >,
                          std::shared_ptr<CellList>,
                          unsigned int >())
+        .def("getAutotuners", &UpdaterClustersGPU<Shape>::getAutotuners)
     ;
     }
 

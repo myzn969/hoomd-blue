@@ -14,6 +14,11 @@
 
 #include <vector>
 #include <string>
+#include <map>
+
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
 
 #ifdef ENABLE_HIP
 #include <hip/hip_runtime.h>
@@ -29,7 +34,7 @@
     internal state machine and makes sweeps over all valid parameter values. Performance is measured just for the single
     kernel in question with cudaEvent timers. A number of sweeps are combined with a median to determine the fastest
     parameter. Additional timing sweeps are performed at a defined period in order to update to changing conditions.
-    The sampling mode can also be changed to average or maximum. The latter is helpful when the distribution of kernel
+    The sampling mode can also be changed to averaging. The latter is helpful when the distribution of kernel
     runtimes is bimodal, e.g. because it depends on input of variable size.
 
     The begin() and end() methods must be called before and after the kernel launch to be tuned. The value of the tuned
@@ -47,6 +52,30 @@
     Autotuner is not useful in non-GPU builds. Timing is performed with CUDA events and requires ENABLE_HIP=on.
     Behavior of Autotuner is undefined when ENABLE_HIP=off.
 
+    ** Autotuning in several dimensions **
+    The class fully supports tuning in more than one dimension. Either the parameter can be packed into a single unsigned int,
+    e.g. by multiplying by powers of 10, as is currently done in many HOOMD classes, or they can be explicitly expanded
+    into a cartesian product of several dimensions. Of course, tuning gets exponentially slower with the number of dimensions.
+    Tuning of individual dimensions can be disabled by calling setEnabled() with a parameter for a given dimension.
+
+    ** Attaching to a tuner from a CPU thread **
+    It is possible to attach to the tuner from a different CPU thread to supply the next parameter and get the last
+    execution time as a return value. In this way, we can allow a python thread running, e.g., a minimization routine,
+    to select the next parameter value instead of iterating over them in a flat array. Proper synchronization
+    primitives between the tuning thread and the GPU execution thread are provided. When attached, we yield control over
+    the selection of the optimal parameter to the thread.
+
+    When the tuner thread attaches, it sets an initial parameter value for the
+    next kernel launch.
+
+    The entry point for tuning is measure(). The launch of the kernel being
+    autotuned will block until measure() is called with a valid parameter
+    value. The method returns the kernel execution time in ms after the kernel
+    has completed.
+
+    When the host thread is done it sets the optimal parameter value using
+    setOptimalParameter() and detaches from the tuner.
+
     ** Implementation ** <br>
     Internally, m_nsamples is the number of samples to take (odd for median computation). m_current_sample is the
     current sample being taken in a circular fashion, and m_current_element is the index of the current parameter being
@@ -57,8 +86,15 @@
 class PYBIND11_EXPORT Autotuner
     {
     public:
-        //! Constructor
+        //! Constructor for a single dimension
         Autotuner(const std::vector<unsigned int>& parameters,
+                  unsigned int nsamples,
+                  unsigned int period,
+                  const std::string& name,
+                  std::shared_ptr<const ExecutionConfiguration> exec_conf);
+
+        //! Constructor with n dimensions
+        Autotuner(const std::vector<std::vector<unsigned int> >& parameters,
                   unsigned int nsamples,
                   unsigned int period,
                   const std::string& name,
@@ -87,41 +123,32 @@ class PYBIND11_EXPORT Autotuner
 
         While sampling, the value returned by this function will sweep though all valid parameters. Otherwise, it will
         return the fastest performing parameter.
+
+        When attached to an external tuner, this function is called by the kernel excecution thread.
+        The return value is undefined unless inside a tuning block, which is demarcated by begin() and end() calls
+
+        \param dim the component of the current parameter we're querying (default==0 for backwards compatibility)
         */
-        unsigned int getParam()
+        unsigned int getParam(unsigned int dim=0)
             {
-            return m_current_param;
+            assert(dim < m_current_param.size());
+            return m_current_param[dim];
+            }
+
+        //! Similar to getParam, but returns a pointer to the n parameters in managed memory
+        /*! The device data is valid until the the host code enters the next begin()/end() block.
+         *  A device synchronization is being performed at that point to ensure the kernel
+         *  sees the updated data. If no tuning is being performed, the device data remains valid.
+         */
+        unsigned int *getDeviceParams() const
+            {
+            return d_params;
             }
 
         //! Enable/disable sampling
         /*! \param enabled true to enable sampling, false to disable it
         */
-        void setEnabled(bool enabled)
-            {
-            m_enabled = enabled;
-
-            if (!enabled)
-                {
-                m_exec_conf->msg->notice(6) << "Disable Autotuner " << m_name << std::endl;
-
-                // if not complete, issue a warning
-                if (!isComplete())
-                    {
-                    m_exec_conf->msg->notice(2) << "Disabling Autotuner " << m_name << " before initial scan completed!" << std::endl;
-                    }
-                else
-                    {
-                    // ensure that we are in the idle state and have an up to date optimal parameter
-                    m_current_element = 0;
-                    m_state = IDLE;
-                    m_current_param = computeOptimalParameter();
-                    }
-                }
-            else
-                {
-                m_exec_conf->msg->notice(6) << "Enable Autotuner " << m_name << std::endl;
-                }
-            }
+        void setEnabled(bool enabled);
 
         //! Test if initial sampling is complete
         /*! \returns true if the initial sampling run is complete
@@ -154,8 +181,7 @@ class PYBIND11_EXPORT Autotuner
         //!< Enumeration of different sampling modes
         enum mode_Enum {
             mode_median = 0, //!< Median
-            mode_avg,        //!< Average
-            mode_max         //!< Maximum
+            mode_avg         //!< Average
             };
 
         //! Set sampling mode
@@ -181,8 +207,68 @@ class PYBIND11_EXPORT Autotuner
             return v;
             }
 
+        /*
+         * API for controlling tuning from a CPU thread
+         */
+
+        //! Return the list of parameters for use in a different host thread
+        const std::vector< std::vector< unsigned int> >& getParameterList() const
+            {
+            return m_parameters;
+            }
+
+        //! Return the enable/disable flags per dimension
+        const bool getEnableDimension(unsigned int dim) const
+            {
+            assert(dim < m_parameters.size());
+            return m_enable_dim[dim];
+            }
+
+        //! Enable/disable sampling in one dimension
+        /*! \param enabled true to enable sampling, false to disable it
+         *! \param dim the dimension to enable/diable
+         */
+        void setEnableDimension(unsigned int dim, bool enabled);
+
+        //! Return the name of this tuner
+        std::string getName()
+            {
+            return m_name;
+            }
+
+        //! Attach the GPU kernel to a controlling thread
+        /*! This causes the next kernel launch to block until a parameter
+         * value is supplied from a different thread using measure()
+         *
+         * Attachment must be performed while the kernel is **not** running, e.g.
+         * from the same thread as the GPU execution thread before entering
+         * the time stepping loop of the simulation, run()
+         */
+        void attach()
+            {
+            m_attached = true;
+            m_have_param = false;
+            }
+
+        //! Set the optimal parameter value to use and detach
+        /*! \param opt The result of the minimization
+         *
+         * This method can be called (from the controlling thread) regardless of whether the
+         * kernel is running and sets the parameter value for subsequent launches
+         */
+        void setOptimalParameter(const std::vector<unsigned int>& opt);
+
+        //! Measure the execution time of the next kernel launch
+        /* \param param the launch parameter to be tested
+         * \returns the execution time in ms
+         *
+         * This method is intended be called from a separate host thread and
+         * only returns when the kernel launch has completed.
+         */
+        float measure(const std::vector<unsigned int>& param);
+
     protected:
-        unsigned int computeOptimalParameter();
+        std::vector<unsigned int> computeOptimalParameter();
 
         //! State names
         enum State
@@ -195,19 +281,21 @@ class PYBIND11_EXPORT Autotuner
         // parameters
         unsigned int m_nsamples;    //!< Number of samples to take for each parameter
         unsigned int m_period;      //!< Number of calls before sampling occurs again
-        bool m_enabled;             //!< True if enabled
+        std::atomic<bool> m_enabled;//!< True if enabled
+        std::vector<bool> m_enable_dim;   //!< Allows enabling/disabling tuning per dimension
+
         std::string m_name;         //!< Descriptive name
-        std::vector<unsigned int> m_parameters;  //!< valid parameters
+        std::vector<std::vector<unsigned int> > m_parameters;  //!< valid parameters, n dimensional
 
         // state info
         State m_state;                  //!< Current state
         unsigned int m_current_sample;  //!< Current sample taken
-        unsigned int m_current_element; //!< Index of current parameter sampled
+        std::vector<unsigned int> m_current_element; //!< Index of current parameter sampled, n dimensional
         unsigned int m_calls;           //!< Count of the number of calls since the last sample
-        unsigned int m_current_param;   //!< Value of the current parameter
+        std::vector<unsigned int> m_current_param;   //!< Value of the current parameter, n dimensional
 
-        std::vector< std::vector< float > > m_samples;  //!< Raw sample data for each element
-        std::vector< float > m_sample_median;           //!< Current sample median for each element
+        std::map< std::vector<unsigned int>, std::vector< float > > m_samples;  //!< Raw sample data for each element, n dimensional
+        std::map< std::vector<unsigned int>,  float > m_sample_median;           //!< Current sample median for each element
 
         std::shared_ptr<const ExecutionConfiguration> m_exec_conf; //!< Execution configuration
 
@@ -218,6 +306,24 @@ class PYBIND11_EXPORT Autotuner
 
         bool m_sync;              //!< If true, synchronize results via MPI
         mode_Enum m_mode;         //!< The sampling mode
+
+        //! Variable for controlling tuning from a different CPU thread
+        std::mutex m_mutex;             //!< Mutex for autotuning from a CPU thread
+        std::condition_variable m_cv;   //!< Condition variable for synchronizing the GPU execution thread with the tuner thread
+
+        std::atomic<bool> m_attached;   //!< True if we are attached to an external tuning thread
+        float m_last_sample;            //!< The last sample taken
+        bool m_have_param;              //!< True if the tuner thread is waiting for a timing
+        bool m_have_timing;             //!< True if we have a current timing value
+
+        unsigned int *d_params;         //!< Current parameters in managed memory
+        bool m_cur_params_on_device;    //!< True if the device params are current
+
+        // setup data structures
+        void initialize(const std::vector<std::vector<unsigned int> >& params);
+
+        // sanity check on input paramters
+        bool sanityCheck(const std::vector<unsigned int>& param);
     };
 
 //! Export the Autotuner class to python

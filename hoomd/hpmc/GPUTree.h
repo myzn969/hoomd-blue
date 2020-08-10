@@ -299,43 +299,42 @@ class GPUTree
         //! Load dynamic data members into shared memory and increase pointer
         /*! \param ptr Pointer to load data to (will be incremented)
             \param available_bytes Size of remaining shared memory allocation
+            \param mask Bitmask indiciating which arrays we should attempt to load
          */
-        DEVICE void load_shared(char *& ptr, unsigned int &available_bytes)
+        HOSTDEVICE void load_shared(char *& ptr, unsigned int &available_bytes,
+                                    const unsigned int mask) const
             {
-            m_center.load_shared(ptr, available_bytes);
-            m_lengths.load_shared(ptr, available_bytes);
-            m_rotation.load_shared(ptr, available_bytes);
-            m_mask.load_shared(ptr, available_bytes);
-            m_is_sphere.load_shared(ptr, available_bytes);
+            if (mask & 1)
+                m_center.load_shared(ptr, available_bytes);
+            if (mask & 2)
+                m_lengths.load_shared(ptr, available_bytes);
+            if (mask & 4)
+                m_rotation.load_shared(ptr, available_bytes);
+            if (mask & 8)
+                m_mask.load_shared(ptr, available_bytes);
+            if (mask & 16)
+                m_is_sphere.load_shared(ptr, available_bytes);
 
-            m_left.load_shared(ptr, available_bytes);
-            m_escape.load_shared(ptr, available_bytes);
-            m_ancestors.load_shared(ptr, available_bytes);
+            if (mask & 32)
+                m_left.load_shared(ptr, available_bytes);
+            if (mask & 64)
+                m_escape.load_shared(ptr, available_bytes);
+            if (mask & 128)
+                m_ancestors.load_shared(ptr, available_bytes);
 
-            m_leaf_ptr.load_shared(ptr, available_bytes);
-            m_leaf_obb_ptr.load_shared(ptr, available_bytes);
-            m_particles.load_shared(ptr, available_bytes);
+            if (mask & 256)
+                m_leaf_ptr.load_shared(ptr, available_bytes);
+
+            if (mask & 512)
+                m_leaf_obb_ptr.load_shared(ptr, available_bytes);
+
+            if (mask & 1024)
+                m_particles.load_shared(ptr, available_bytes);
             }
 
-        //! Determine size of the shared memory allocation
-        /*! \param ptr Pointer to increment
-            \param available_bytes Size of remaining shared memory allocation
-         */
-        HOSTDEVICE void allocate_shared(char *& ptr, unsigned int &available_bytes) const
+        HOSTDEVICE static inline unsigned int getTuningBits()
             {
-            m_center.allocate_shared(ptr, available_bytes);
-            m_lengths.allocate_shared(ptr, available_bytes);
-            m_rotation.allocate_shared(ptr, available_bytes);
-            m_mask.allocate_shared(ptr, available_bytes);
-            m_is_sphere.allocate_shared(ptr, available_bytes);
-
-            m_left.allocate_shared(ptr, available_bytes);
-            m_escape.allocate_shared(ptr, available_bytes);
-            m_ancestors.allocate_shared(ptr, available_bytes);
-
-            m_leaf_ptr.allocate_shared(ptr, available_bytes);
-            m_leaf_obb_ptr.allocate_shared(ptr, available_bytes);
-            m_particles.allocate_shared(ptr, available_bytes);
+            return 11;
             }
 
         //! Get the capacity of leaf nodes

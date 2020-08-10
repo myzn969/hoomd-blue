@@ -35,7 +35,7 @@ class PYBIND11_EXPORT PatchEnergyJITUnionGPU : public PatchEnergyJITUnion
             m_gpu_factory.setRCutUnion(m_rcut_union);
 
             // tuning params for patch narrow phase
-            std::vector<unsigned int> valid_params_patch;
+            std::vector<std::vector< unsigned int > > valid_params_patch(this->m_sysdef->getParticleData()->getNTypes()+1);
             const unsigned int narrow_phase_max_threads_per_eval = this->m_exec_conf->dev_prop.warpSize;
             auto& launch_bounds = m_gpu_factory.getLaunchBounds();
             for (auto cur_launch_bounds: launch_bounds)
@@ -45,11 +45,17 @@ class PYBIND11_EXPORT PatchEnergyJITUnionGPU : public PatchEnergyJITUnion
                     for (unsigned int eval_threads=1; eval_threads <= narrow_phase_max_threads_per_eval; eval_threads *= 2)
                         {
                         if ((cur_launch_bounds % (group_size*eval_threads)) == 0)
-                            valid_params_patch.push_back(cur_launch_bounds*1000000 + group_size*100 + eval_threads);
+                            valid_params_patch[0].push_back(cur_launch_bounds*1000000 + group_size*100 + eval_threads);
                         }
                     }
                 }
 
+            unsigned int tuning_bits = jit::union_params_t::getTuningBits();
+            for (unsigned int itype = 0; itype < this->m_sysdef->getParticleData()->getNTypes(); ++itype)
+                {
+                for (int param = 0; param < (1<<tuning_bits); ++param)
+                    valid_params_patch[1+itype].push_back(param);
+                }
             m_tuner_narrow_patch.reset(new Autotuner(valid_params_patch, 5, 100000, "hpmc_narrow_patch", this->m_exec_conf));
             }
 

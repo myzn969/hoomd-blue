@@ -257,9 +257,10 @@ __global__ void gpu_hpmc_free_volume_kernel(unsigned int n_sample,
     // initialize extra shared mem
     char *s_extra = (char *)(s_overlap + n_groups);
 
+    // always load all parameters
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
-        s_params[cur_type].load_shared(s_extra, available_bytes);
+        s_params[cur_type].load_shared(s_extra, available_bytes, 0xffffffff);
 
     if (master)
         {
@@ -422,13 +423,14 @@ hipError_t gpu_hpmc_free_volume(const hpmc_free_volume_args_t& args, const typen
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int i = 0; i < args.num_types; ++i)
         {
-        d_params[i].allocate_shared(ptr, available_bytes);
+        // always load all parameters
+        d_params[i].load_shared(ptr, available_bytes, 0xffffffff);
         }
     unsigned int extra_bytes = max_extra_bytes - available_bytes;
 
     shared_bytes += extra_bytes;
 
-    hipLaunchKernelGGL(HIP_KERNEL_NAME(gpu_hpmc_free_volume_kernel<Shape>), dim3(grid), dim3(threads), shared_bytes, 0, 
+    hipLaunchKernelGGL(HIP_KERNEL_NAME(gpu_hpmc_free_volume_kernel<Shape>), dim3(grid), dim3(threads), shared_bytes, 0,
                                                      args.n_sample,
                                                      args.type,
                                                      args.d_postype,

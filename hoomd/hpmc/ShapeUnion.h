@@ -68,49 +68,48 @@ struct union_params : param_base
     //! Load dynamic data members into shared memory and increase pointer
     /*! \param ptr Pointer to load data to (will be incremented)
         \param available_bytes Size of remaining shared memory allocation
+        \param mask bitmask indicating which arrays we should attempt to load
      */
-    DEVICE inline void load_shared(char *& ptr, unsigned int &available_bytes)
+    HOSTDEVICE inline void load_shared(char *& ptr, unsigned int &available_bytes,
+                                       unsigned int mask) const
         {
-        tree.load_shared(ptr, available_bytes);
-        mpos.load_shared(ptr, available_bytes);
-        bool params_in_shared_mem = mparams.load_shared(ptr, available_bytes);
-        moverlap.load_shared(ptr, available_bytes);
-        morientation.load_shared(ptr, available_bytes);
+        const unsigned int tree_bits = tree.getTuningBits();
+        tree.load_shared(ptr, available_bytes, mask & ((1 << tree_bits)-1));
+        mask >>= tree_bits;
+
+        if (mask & 1)
+            mpos.load_shared(ptr, available_bytes);
+        bool params_in_shared_mem = false;
+        if (mask & 2)
+            params_in_shared_mem = mparams.load_shared(ptr, available_bytes);
+
+        if (mask & 4)
+            moverlap.load_shared(ptr, available_bytes);
+
+        if (mask & 8)
+            morientation.load_shared(ptr, available_bytes);
 
         // load all member parameters
         #if defined (__HIP_DEVICE_COMPILE__)
         __syncthreads();
         #endif
 
+        mask >>= 4; // the remaining MSBs apply to all member shapes
         if (params_in_shared_mem)
             {
             // load only if we are sure that we are not touching any unified memory
             for (unsigned int i = 0; i < mparams.size(); ++i)
                 {
-                mparams[i].load_shared(ptr, available_bytes);
+                mparams[i].load_shared(ptr, available_bytes, mask);
                 }
             }
         }
 
-    //! Determine size of the shared memory allocaation
-    /*! \param ptr Pointer to increment
-        \param available_bytes Size of remaining shared memory allocation
-     */
-    HOSTDEVICE void allocate_shared(char *& ptr, unsigned int &available_bytes) const
+    //!< Returns the number of bits available for tuning
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        tree.allocate_shared(ptr, available_bytes);
-        mpos.allocate_shared(ptr, available_bytes);
-        bool params_in_shared_mem = mparams.allocate_shared(ptr, available_bytes) != nullptr;
-        moverlap.allocate_shared(ptr, available_bytes);
-        morientation.allocate_shared(ptr, available_bytes);
-
-        if (params_in_shared_mem)
-            {
-            for (unsigned int i = 0; i < mparams.size(); ++i)
-                mparams[i].allocate_shared(ptr, available_bytes);
-            }
+        return GPUTree::getTuningBits() + 4 + mparam_type::getTuningBits();
         }
-
 
     #ifdef ENABLE_HIP
     //! Set CUDA memory hints
@@ -240,6 +239,12 @@ struct ShapeUnion
     //! Returns true if this shape splits the overlap check over several threads of a warp using threadIdx.x
     HOSTDEVICE static bool isParallel() {
         return true;
+        }
+
+    //! Returns the number of tuning bits for the GPU kernels
+    HOSTDEVICE static inline unsigned int getTuningBits()
+        {
+        return param_type::getTuningBits();
         }
 
     quat<Scalar> orientation;    //!< Orientation of the particle

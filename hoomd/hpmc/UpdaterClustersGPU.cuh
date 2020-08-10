@@ -72,7 +72,8 @@ struct cluster_args_t
                 const bool _update_shape_param,
                 const hipDeviceProp_t &_devprop,
                 const GPUPartition& _gpu_partition,
-                const hipStream_t *_streams)
+                const hipStream_t *_streams,
+                const unsigned int *_d_type_params)
                 : d_postype(_d_postype),
                   d_orientation(_d_orientation),
                   ci(_ci),
@@ -104,7 +105,8 @@ struct cluster_args_t
                   update_shape_param(_update_shape_param),
                   devprop(_devprop),
                   gpu_partition(_gpu_partition),
-                  streams(_streams)
+                  streams(_streams),
+                  d_type_params(_d_type_params)
         {
         };
 
@@ -140,6 +142,7 @@ struct cluster_args_t
     const hipDeviceProp_t& devprop;   //!< CUDA device properties
     const GPUPartition& gpu_partition; //!< Multi-GPU partition
     const hipStream_t *streams;        //!< kernel streams
+    const unsigned int *d_type_params; //!< Tuning parameters per type
     };
 
 void connected_components(
@@ -258,7 +261,8 @@ __global__ void hpmc_cluster_overlaps(const Scalar4 *d_postype,
                            const unsigned int max_extra_bytes,
                            const unsigned int max_queue_size,
                            const unsigned int work_offset,
-                           const unsigned int nwork)
+                           const unsigned int nwork,
+                           const unsigned int *d_type_params)
     {
     __shared__ unsigned int s_queue_size;
     __shared__ unsigned int s_still_searching;
@@ -313,7 +317,7 @@ __global__ void hpmc_cluster_overlaps(const Scalar4 *d_postype,
 
     unsigned int available_bytes = max_extra_bytes;
     for (unsigned int cur_type = 0; cur_type < num_types; ++cur_type)
-        s_params[cur_type].load_shared(s_extra, available_bytes);
+        s_params[cur_type].load_shared(s_extra, available_bytes, d_type_params[cur_type]);
 
     __syncthreads();
 
@@ -589,7 +593,7 @@ void cluster_overlaps_launcher(const cluster_args_t& args, const typename Shape:
             unsigned int available_bytes = max_extra_bytes;
             for (unsigned int i = 0; i < args.num_types; ++i)
                 {
-                params[i].allocate_shared(ptr, available_bytes);
+                params[i].load_shared(ptr, available_bytes, args.d_type_params[i]);
                 }
             extra_bytes = max_extra_bytes - available_bytes;
             }
@@ -612,8 +616,8 @@ void cluster_overlaps_launcher(const cluster_args_t& args, const typename Shape:
                 args.d_excell_idx, args.d_excell_size, args.excli,
                 args.d_adjacency, args.d_nneigh, args.maxn, args.d_overflow, args.num_types,
                 args.box, args.ghost_width, args.cell_dim, args.ci, args.d_check_overlaps,
-                args.overlap_idx, params,
-                max_extra_bytes, max_queue_size, range.first, nwork);
+                args.overlap_idx, params, max_extra_bytes, max_queue_size, range.first,
+                nwork, args.d_type_params);
             }
         }
     else

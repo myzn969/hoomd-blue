@@ -77,25 +77,27 @@ struct faceted_ellipsoid_params : param_base
     //! Load dynamic data members into shared memory and increase pointer
     /*! \param ptr Pointer to load data to (will be incremented)
         \param available_bytes Size of remaining shared memory allocation
+        \param mask bitmask to indicate which arrays we should load
      */
-    DEVICE void load_shared(char *& ptr, unsigned int &available_bytes)
+    HOSTDEVICE void load_shared(char *& ptr, unsigned int &available_bytes,
+                                unsigned int mask) const
         {
-        n.load_shared(ptr,available_bytes);
-        offset.load_shared(ptr,available_bytes);
-        verts.load_shared(ptr,available_bytes);
-        additional_verts.load_shared(ptr, available_bytes);
+        if (mask & 1)
+            n.load_shared(ptr,available_bytes);
+
+        if (mask & 2)
+            offset.load_shared(ptr,available_bytes);
+
+        mask >>= 2;
+        unsigned int verts3d_bits = poly3d_verts::getTuningBits();
+        verts.load_shared(ptr,available_bytes, mask & ((1 << verts3d_bits)-1));
+        mask >>= verts3d_bits;
+        additional_verts.load_shared(ptr, available_bytes, mask & ((1 << verts3d_bits)-1));
         }
 
-    //! Determine size of a shared memory alloation
-    /*! \param ptr Pointer to increment
-        \param available_bytes Size of remaining shared memory allocation
-     */
-    HOSTDEVICE void allocate_shared(char *& ptr, unsigned int &available_bytes) const
+    HOSTDEVICE static inline unsigned int getTuningBits()
         {
-        n.allocate_shared(ptr,available_bytes);
-        offset.allocate_shared(ptr,available_bytes);
-        verts.allocate_shared(ptr,available_bytes);
-        additional_verts.allocate_shared(ptr, available_bytes);
+        return 2 + 2*poly3d_verts::getTuningBits();
         }
 
     #ifdef ENABLE_HIP
@@ -347,12 +349,6 @@ struct ShapeFacetedEllipsoid
     //! Returns true if this shape splits the overlap check over several threads of a warp using threadIdx.x
     HOSTDEVICE static bool isParallel() { return false; }
 
-    //! Returns true if the overlap check supports sweeping both shapes by a sphere of given radius
-    HOSTDEVICE static bool supportsSweepRadius()
-        {
-        return true;
-        }
-
     /*!
      * Generate the intersections points of polyhedron edges with the sphere
      */
@@ -464,6 +460,12 @@ struct ShapeFacetedEllipsoid
                 }
             }
         #endif
+        }
+
+    //! Returns the number of tuning bits for the GPU kernel
+    HOSTDEVICE static inline unsigned int getTuningBits()
+        {
+        return detail::faceted_ellipsoid_params::getTuningBits();
         }
 
     quat<Scalar> orientation;    //!< Orientation of the sphere (unused)

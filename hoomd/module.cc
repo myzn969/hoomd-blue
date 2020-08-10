@@ -346,6 +346,7 @@ PYBIND11_MODULE(_hoomd, m)
     export_ConstForceCompute(m);
 
 #ifdef ENABLE_HIP
+    export_Autotuner(m);
     export_CellListGPU(m);
     export_ComputeThermoGPU(m);
     export_ComputeThermoHMAGPU(m);
