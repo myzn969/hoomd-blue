@@ -1603,6 +1603,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
             /*
              * make accept/reject decisions
              */
+             if (this->m_prof) this->m_prof->push(this->m_exec_conf, "accept");
+
              bool done = false;
              while (!done)
                 {
@@ -1700,6 +1702,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         done = true;
                     }
                 } //end while (!done)
+
+                if (this->m_prof) this->m_prof->pop(this->m_exec_conf);
 
                 {
                 // access data for proposed moves
