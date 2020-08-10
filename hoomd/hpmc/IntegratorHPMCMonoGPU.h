@@ -1347,6 +1347,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             else
                                 {
                                 // generate random number of depletant insertions per particle, trial insertion and configuration
+                                this->m_exec_conf->beginMultiGPU();
                                 m_tuner_num_depletants_ntrial->begin();
                                 gpu::generate_num_depletants_ntrial(
                                     d_vel.data,
@@ -1505,6 +1506,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                                         CHECK_CUDA_ERROR();
                                     }
+                                this->m_exec_conf->endMultiGPU();
 
                                 ntrial_offset += ntrial*2*this->m_pdata->getMaxN();
                                 }

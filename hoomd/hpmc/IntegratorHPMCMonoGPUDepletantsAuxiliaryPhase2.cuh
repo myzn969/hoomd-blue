@@ -750,7 +750,7 @@ void depletants_launcher_phase2(const hpmc_args_t& args,
             unsigned int blocks_per_particle = auxiliary_args.nwork_local[idev]/
                 (implicit_args.depletants_per_thread*n_groups*tpp) + 1;
 
-            dim3 grid( range.second-range.first, 2*blocks_per_particle, 1);
+            dim3 grid( nwork, 2*blocks_per_particle, 1);
 
             if (blocks_per_particle > args.devprop.maxGridSize[1])
                 {
