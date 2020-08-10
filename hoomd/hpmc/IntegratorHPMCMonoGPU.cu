@@ -601,6 +601,7 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
             have_auxiliary_variables
             );
         }
+
     }
 
 } // end namespace gpu

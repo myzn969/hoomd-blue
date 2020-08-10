@@ -416,7 +416,8 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                 // and as long as no overlaps have been found
                 while (s_queue_size < max_queue_size && (k >> 1) < excell_size)
                     {
-                    // build some shapes, but we only need them to get diameters, so don't load orientations
+                    // which configuration of particle j are we checking against?
+                    bool old = k & 1;
 
                     // prefetch next j
                     k += group_size;
@@ -426,7 +427,6 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                         next_j = __ldg(&d_excell_idx[excli(k >> 1, my_cell)]);
 
                     unsigned int tag_j = d_tag[j];
-                    bool old = k & 1;
 
                     // if j was never updated before i, do not check new config
                     if (!old && (j >= N_local || d_update_order_by_ptl[j] > update_order_i))
