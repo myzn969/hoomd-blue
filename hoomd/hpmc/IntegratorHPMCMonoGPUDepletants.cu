@@ -104,55 +104,6 @@ __global__ void hpmc_reduce_counters(const unsigned int ngpu,
         }
     }
 
-//! Kernel to perform the Metroplis-Hastings step for depletants
-__global__ void hpmc_depletants_accept(
-    const unsigned int seed,
-    const unsigned int timestep,
-    const unsigned int select,
-    const int  *d_deltaF_int,
-    const Index2D depletant_idx,
-    const unsigned int deltaF_pitch,
-    const Scalar *d_fugacity,
-    const unsigned int *d_ntrial,
-    unsigned int *d_reject_out,
-    const unsigned int nwork,
-    const unsigned work_offset)
-    {
-    // the particle we are handling
-    unsigned int work_idx = blockIdx.x*blockDim.x + threadIdx.x;
-    if (work_idx >= nwork)
-        return;
-    unsigned int i = work_idx + work_offset;
-
-    // reduce free energy over depletant type pairs
-    Scalar deltaF_i(0.0);
-    for (unsigned int itype = 0; itype < depletant_idx.getW(); ++itype)
-        for (unsigned int jtype = itype; jtype < depletant_idx.getH(); ++jtype)
-            {
-            // it is important that this loop is serial, to eliminate non-determism
-            // in the acceptance loop (too much noise can make convergence difficult)
-            unsigned int ntrial = d_ntrial[depletant_idx(itype,jtype)];
-            Scalar fugacity = d_fugacity[depletant_idx(itype,jtype)];
-
-            if (fugacity == 0.0 || ntrial == 0)
-                continue;
-
-            // rescale deltaF to units of kBT
-            int dF_int_i = d_deltaF_int[deltaF_pitch*depletant_idx(itype,jtype) + i];
-            deltaF_i += log(1+1/(Scalar)ntrial)*dF_int_i;
-            }
-
-    hoomd::RandomGenerator rng_accept(hoomd::RNGIdentifier::HPMCDepletantsAccept,
-        i, seed, timestep, select);
-
-    Scalar u = hoomd::UniformDistribution<Scalar>()(rng_accept);
-    bool accept = u <= exp(deltaF_i);
-
-    // update the reject flags
-    if (!accept)
-        atomicAdd(&d_reject_out[i], 1);
-    }
-
 } // end namespace kernel
 
 void generate_num_depletants(const unsigned int seed,
@@ -335,54 +286,6 @@ void reduce_counters(const unsigned int ngpu,
                      d_implicit_counters);
     }
 
-void hpmc_depletants_accept(
-    const unsigned int seed,
-    const unsigned int timestep,
-    const unsigned int select,
-    const int *d_deltaF_int,
-    const Index2D depletant_idx,
-    const unsigned int deltaF_pitch,
-    const Scalar *d_fugacity,
-    const unsigned int *d_ntrial,
-    unsigned int *d_reject_out,
-    const GPUPartition& gpu_partition,
-    const unsigned int block_size)
-    {
-    // determine the maximum block size and clamp the input block size down
-    static unsigned int max_block_size = UINT_MAX;
-    if (max_block_size == UINT_MAX)
-        {
-        hipFuncAttributes attr;
-        hipFuncGetAttributes(&attr, reinterpret_cast<const void*>(kernel::hpmc_depletants_accept));
-        max_block_size = attr.maxThreadsPerBlock;
-        }
-
-    unsigned int run_block_size = min(block_size, max_block_size);
-
-    assert(d_deltaF_int);
-    assert(d_fugacity);
-    assert(d_ntrial);
-    assert(d_reject_out);
-
-    for (int idev = gpu_partition.getNumActiveGPUs() - 1; idev >= 0; --idev)
-        {
-        auto range = gpu_partition.getRangeAndSetGPU(idev);
-        unsigned int nwork = range.second - range.first;
-
-        hipLaunchKernelGGL(kernel::hpmc_depletants_accept, nwork/run_block_size+1, run_block_size, 0, 0,
-            seed,
-            timestep,
-            select,
-            d_deltaF_int,
-            depletant_idx,
-            deltaF_pitch,
-            d_fugacity,
-            d_ntrial,
-            d_reject_out,
-            nwork,
-            range.first);
-        }
-    }
 } // end namespace gpu
 } // end namespace hpmc
 

@@ -317,7 +317,7 @@ class IntegratorHPMCMono : public IntegratorHPMC
                 o << " diameter charge";
                 }
 
-            bool have_auxilliary_variables = false;
+            bool have_auxiliary_variables = false;
             for (unsigned int i = 0; i < this->m_pdata->getNTypes(); ++i)
                 {
                 for (unsigned int j = 0; j < this->m_pdata->getNTypes(); ++j)
@@ -325,13 +325,13 @@ class IntegratorHPMCMono : public IntegratorHPMC
                     if (m_fugacity[m_depletant_idx(i,j)] != 0.0 &&
                         m_ntrial[m_depletant_idx(i,j)] > 0)
                         {
-                        have_auxilliary_variables = true;
+                        have_auxiliary_variables = true;
                         break;
                         }
                     }
                 }
 
-            if (have_auxilliary_variables)
+            if (have_auxiliary_variables)
                 {
                 flags[comm_flag::velocity] = 1;
                 o << " velocity";

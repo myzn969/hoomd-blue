@@ -8,7 +8,7 @@
 #include "hoomd/hpmc/IntegratorHPMCMono.h"
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUTypes.cuh"
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsTypes.cuh"
-#include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxilliaryTypes.cuh"
+#include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh"
 
 #include "hoomd/Autotuner.h"
 #include "hoomd/GlobalArray.h"
@@ -192,11 +192,6 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
 
             m_tuner_depletants_phase2->setPeriod(chain_length*period*this->m_nselect);
             m_tuner_depletants_phase2->setEnabled(enable);
-
-            #if 0
-            m_tuner_depletants_accept->setPeriod(chain_length*period*this->m_nselect);
-            m_tuner_depletants_accept->setEnabled(enable);
-            #endif
             }
 
         //! Enable deterministic simulations
@@ -247,7 +242,6 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         std::unique_ptr<Autotuner> m_tuner_num_depletants_ntrial;   //!< Autotuner for calculating number of depletants with ntrial
         std::unique_ptr<Autotuner> m_tuner_depletants_phase1;//!< Tuner for depletants with ntrial, phase 1 kernel
         std::unique_ptr<Autotuner> m_tuner_depletants_phase2;//!< Tuner for depletants with ntrial, phase 2 kernel
-        std::unique_ptr<Autotuner> m_tuner_depletants_accept;//!< Tuner for depletants with ntrial, acceptance kernel
 
         GlobalArray<Scalar4> m_trial_postype;                 //!< New positions (and type) of particles
         GlobalArray<Scalar4> m_trial_orientation;             //!< New orientations
@@ -261,6 +255,20 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<unsigned int> m_n_depletants_ntrial;      //!< List of number of depletants, per particle, trial insertion and configuration
         unsigned int m_max_len;                               //!< Max length of shared memory allocation per group
         GlobalArray<unsigned int> m_req_len;                  //!< Requested length of shared mem per group
+
+        GlobalArray<unsigned int> m_deltaF_or_nneigh;         //!< Max number of neighbors for logical or
+        GlobalArray<unsigned int> m_deltaF_or_nlist;          //!< Neighbor list for logical or
+        GlobalArray<unsigned int> m_deltaF_or_len;            //!< Length of every logical or term
+        GlobalArray<Scalar> m_deltaF_or;                      //!< Free energy contributions for logical or
+        unsigned int m_deltaF_or_maxlen;                      //!< Maximum number of neighbors for logical or
+        GlobalArray<unsigned int> m_overflow_or;              //!< Overflow condition for logical OR
+        GlobalArray<unsigned int> m_deltaF_nor_nneigh;        //!< Max number of neighbors for logical nor
+        GlobalArray<unsigned int> m_deltaF_nor_nlist;         //!< Neighbor list for logical nor
+        GlobalArray<unsigned int> m_deltaF_nor_len;           //!< Length of every logical nor term
+        GlobalArray<unsigned int> m_deltaF_nor_k;             //!< Identity of the inserting particle (in phase 2)
+        GlobalArray<Scalar> m_deltaF_nor;                     //!< Free energy contributions for logical nor
+        unsigned int m_deltaF_nor_maxlen;                     //!< Maximum number of neighbors for logical nor
+        GlobalArray<unsigned int> m_overflow_nor;             //!< Overflow condition for logical NOR
 
         GlobalArray<unsigned int> m_nlist;                       //!< List of overlapping particles
         GlobalArray<unsigned int> m_nneigh;                     //!< Number of neighbors
@@ -304,6 +312,9 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
 
         //! Reallocate nlist as necessary
         bool checkReallocate();
+
+        //! Reallocate depletant nlists as necessary
+        bool checkReallocateDepletants();
 
         //! Reallocate nlist as necessary for energy evaluation
         bool checkReallocatePatch();
@@ -414,6 +425,53 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
 
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_reject_out);
     TAG_ALLOCATION(m_reject_out);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_or_nneigh);
+    TAG_ALLOCATION(m_deltaF_or_nneigh);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_or_nlist);
+    TAG_ALLOCATION(m_deltaF_or_nlist);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_or_len);
+    TAG_ALLOCATION(m_deltaF_or_len);
+
+    GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_deltaF_or);
+    TAG_ALLOCATION(m_deltaF_or);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_overflow_or);
+    TAG_ALLOCATION(m_overflow_or);
+
+        {
+        ArrayHandle<unsigned int> h_overflow_or(m_overflow_or, access_location::host, access_mode::overwrite);
+        *h_overflow_or.data = 0;
+        }
+
+    m_deltaF_or_maxlen = 0;
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_nor_nneigh);
+    TAG_ALLOCATION(m_deltaF_nor_nneigh);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_nor_nlist);
+    TAG_ALLOCATION(m_deltaF_nor_nlist);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_nor_len);
+    TAG_ALLOCATION(m_deltaF_nor_len);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_nor_k);
+    TAG_ALLOCATION(m_deltaF_nor_k);
+
+    GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_deltaF_nor);
+    TAG_ALLOCATION(m_deltaF_nor);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_overflow_nor);
+    TAG_ALLOCATION(m_overflow_nor);
+
+    m_deltaF_nor_maxlen = 0;
+
+        {
+        ArrayHandle<unsigned int> h_overflow_nor(m_overflow_nor, access_location::host, access_mode::overwrite);
+        *h_overflow_nor.data = 0;
+        }
 
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_nlist);
     TAG_ALLOCATION(m_nlist);
@@ -832,6 +890,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
             m_trial_vel.resize(this->m_pdata->getMaxN());
             m_trial_move_type.resize(this->m_pdata->getMaxN());
 
+            m_deltaF_or_nneigh.resize(this->m_pdata->getMaxN());
+            m_deltaF_nor_nneigh.resize(this->m_pdata->getMaxN());
             update_gpu_advice = true;
             }
 
@@ -1060,7 +1120,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                 }
 
             // make sure neighbor list size is sufficient before running the kernels
-            checkReallocate();
+            checkReallocate() || (have_auxiliary_variables && checkReallocateDepletants());
 
             do
                 {
@@ -1103,6 +1163,21 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_n_depletants(m_n_depletants, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_n_depletants_ntrial(m_n_depletants_ntrial, access_location::device, access_mode::overwrite);
 
+                    ArrayHandle<unsigned int> d_deltaF_or_nneigh(m_deltaF_or_nneigh, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_deltaF_or_nlist(m_deltaF_or_nlist, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_deltaF_or_len(m_deltaF_or_len, access_location::device, access_mode::overwrite);
+                    ArrayHandle<Scalar> d_deltaF_or(m_deltaF_or, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_overflow_or(m_overflow_or, access_location::device, access_mode::readwrite);
+
+                    ArrayHandle<unsigned int> d_deltaF_nor_nneigh(m_deltaF_nor_nneigh, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_deltaF_nor_nlist(m_deltaF_nor_nlist, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_deltaF_nor_len(m_deltaF_nor_len, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_deltaF_nor_k(m_deltaF_nor_k, access_location::device, access_mode::overwrite);
+                    ArrayHandle<Scalar> d_deltaF_nor(m_deltaF_nor, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_overflow_nor(m_overflow_nor, access_location::device, access_mode::readwrite);
+
+                    ArrayHandle<unsigned int> d_req_len(m_req_len, access_location::device, access_mode::readwrite);
+
                     // reset number of neighbors
                     for (int idev = this->m_exec_conf->getNumActiveGPUs() - 1; idev >= 0; --idev)
                         {
@@ -1113,6 +1188,23 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             hipMemsetAsync(d_nneigh.data + range.first, 0,  sizeof(unsigned int)*(range.second-range.first));
                         if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                             CHECK_CUDA_ERROR();
+                        }
+
+                    if (have_auxiliary_variables)
+                        {
+                        for (int idev = this->m_exec_conf->getNumActiveGPUs() - 1; idev >= 0; --idev)
+                            {
+                            hipSetDevice(this->m_exec_conf->getGPUIds()[idev]);
+
+                            auto range = this->m_pdata->getGPUPartition().getRange(idev);
+                            if (range.second - range.first != 0)
+                                {
+                                hipMemsetAsync(d_deltaF_or_nneigh.data + range.first, 0,  sizeof(unsigned int)*(range.second-range.first));
+                                hipMemsetAsync(d_deltaF_nor_nneigh.data + range.first, 0,  sizeof(unsigned int)*(range.second-range.first));
+                                }
+                            if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
+                                CHECK_CUDA_ERROR();
+                            }
                         }
 
                     // fill the parameter structure for the GPU kernels
@@ -1252,8 +1344,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 m_tuner_depletants->end();
                                 this->m_exec_conf->endMultiGPU();
                                 }
-
-                            #if 0
                             else
                                 {
                                 // generate random number of depletant insertions per particle, trial insertion and configuration
@@ -1351,14 +1441,27 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     &nwork_rank[0],
                                     &work_offset[0],
                                     d_n_depletants_ntrial.data + ntrial_offset,
-                                    d_deltaF_int.data + this->m_depletant_idx(itype,jtype)*this->m_pdata->getMaxN(),
                                     &m_depletant_streams_phase1[this->m_depletant_idx(itype,jtype)].front(),
                                     &m_depletant_streams_phase2[this->m_depletant_idx(itype,jtype)].front(),
                                     m_max_len,
                                     d_req_len.data,
                                     particle_comm_rank == particle_comm_size - 1,
                                     this->m_pdata->getNGhosts(),
-                                    gpu_partition_rank);
+                                    gpu_partition_rank,
+                                    d_deltaF_or_nneigh.data,
+                                    d_deltaF_or_nlist.data,
+                                    d_deltaF_or_len.data,
+                                    d_deltaF_or.data,
+                                    m_deltaF_or_maxlen,
+                                    d_overflow_or.data,
+                                    d_deltaF_nor_nneigh.data,
+                                    d_deltaF_nor_nlist.data,
+                                    d_deltaF_nor_len.data,
+                                    d_deltaF_nor_k.data,
+                                    d_deltaF_nor.data,
+                                    m_deltaF_nor_maxlen,
+                                    d_overflow_nor.data
+                                    );
 
                                 // phase 1, insert into excluded volume of particle i
                                 m_tuner_depletants_phase1->begin();
@@ -1405,11 +1508,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                                 ntrial_offset += ntrial*2*this->m_pdata->getMaxN();
                                 }
-                            #endif
                             }
                         }
 
-                    #if 0
                     // did the dynamically allocated shared memory overflow during kernel execution?
                     ArrayHandle<unsigned int> h_req_len(m_req_len, access_location::host, access_mode::read);
 
@@ -1420,101 +1521,11 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         m_max_len = *h_req_len.data;
                         continue; // rerun kernels
                         }
-                   #endif
 
                    reallocate_smem = false;
                    } // end while (reallocate_smem)
 
-                #if 0
-                if (have_depletants && have_auxiliary_variables)
-                    {
-                    #ifdef ENABLE_MPI
-                    if (m_ntrial_comm)
-                        {
-                        // reduce free energy across rows (depletants)
-                        #ifdef ENABLE_MPI_CUDA
-                        ArrayHandle<int> d_deltaF_int(m_deltaF_int, access_location::device, access_mode::readwrite);
-                        MPI_Allreduce(MPI_IN_PLACE,
-                            d_deltaF_int.data,
-                            this->m_pdata->getMaxN()*this->m_depletant_idx.getNumElements(),
-                            MPI_INT,
-                            MPI_SUM,
-                            (*m_ntrial_comm)());
-                        #else
-                        ArrayHandle<int> h_deltaF_int(m_deltaF_int, access_location::host, access_mode::readwrite);
-                        MPI_Allreduce(MPI_IN_PLACE,
-                            h_deltaF_int.data,
-                            this->m_pdata->getMaxN()*this->m_depletant_idx.getNumElements(),
-                            MPI_INT,
-                            MPI_SUM,
-                            (*m_ntrial_comm)());
-                        #endif
-                        }
-                    #endif
-
-                    #ifdef ENABLE_MPI
-                    if (m_particle_comm)
-                        {
-                        // reduce free energy across columns (particles)
-                        #ifdef ENABLE_MPI_CUDA
-                        ArrayHandle<int> d_deltaF_int(m_deltaF_int, access_location::device, access_mode::readwrite);
-                        MPI_Allreduce(MPI_IN_PLACE,
-                            d_deltaF_int.data,
-                            this->m_pdata->getMaxN()*this->m_depletant_idx.getNumElements(),
-                            MPI_INT,
-                            MPI_SUM,
-                            (*m_particle_comm)());
-                        #else
-                        ArrayHandle<int> h_deltaF_int(m_deltaF_int, access_location::host, access_mode::readwrite);
-                        MPI_Allreduce(MPI_IN_PLACE,
-                            h_deltaF_int.data,
-                            this->m_pdata->getMaxN()*this->m_depletant_idx.getNumElements(),
-                            MPI_INT,
-                            MPI_SUM,
-                            (*m_particle_comm)());
-                        #endif
-                        }
-                    #endif
-
-                    // did the dynamically allocated shared memory overflow during kernel execution?
-                    ArrayHandle<unsigned int> h_req_len(m_req_len, access_location::host, access_mode::read);
-
-                    if (*h_req_len.data > m_max_len)
-                        {
-                        this->m_exec_conf->msg->notice(9) << "Increasing shared mem list size per group "
-                            << m_max_len << "->" << *h_req_len.data << std::endl;
-                        m_max_len = *h_req_len.data;
-                        continue; // rerun kernels
-                        }
-
-                    // final tally, do Metropolis-Hastings
-                    ArrayHandle<Scalar> d_fugacity(this->m_fugacity, access_location::device, access_mode::read);
-                    ArrayHandle<unsigned int> d_ntrial(this->m_ntrial, access_location::device, access_mode::read);
-                    ArrayHandle<int> d_deltaF_int(m_deltaF_int, access_location::device, access_mode::read);
-                    ArrayHandle<unsigned int> d_reject_out(m_reject_out, access_location::device, access_mode::readwrite);
-
-                    this->m_exec_conf->beginMultiGPU();
-                    m_tuner_depletants_accept->begin();
-                    gpu::hpmc_depletants_accept(
-                        this->m_seed,
-                        timestep,
-                        this->m_exec_conf->getRank()*this->m_nselect + i,
-                        d_deltaF_int.data,
-                        this->m_depletant_idx,
-                        this->m_pdata->getMaxN(),
-                        d_fugacity.data,
-                        d_ntrial.data,
-                        d_reject_out.data,
-                        this->m_pdata->getGPUPartition(),
-                        m_tuner_depletants_accept->getParam());
-                    if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
-                        CHECK_CUDA_ERROR();
-                    m_tuner_depletants_accept->end();
-                    this->m_exec_conf->endMultiGPU();
-                    }
-                #endif
-
-                reallocate = checkReallocate();
+                reallocate = checkReallocate() || (have_auxiliary_variables && checkReallocateDepletants());
                 } while (reallocate);
 
             if (this->m_patch && !this->m_patch_log)
@@ -1615,6 +1626,17 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<float> d_energy_old(m_energy_old, access_location::device, access_mode::read);
                     ArrayHandle<float> d_energy_new(m_energy_new, access_location::device, access_mode::read);
 
+                    ArrayHandle<unsigned int> d_deltaF_or_nneigh(m_deltaF_or_nneigh, access_location::device, access_mode::read);
+                    ArrayHandle<unsigned int> d_deltaF_or_nlist(m_deltaF_or_nlist, access_location::device, access_mode::read);
+                    ArrayHandle<unsigned int> d_deltaF_or_len(m_deltaF_or_len, access_location::device, access_mode::read);
+                    ArrayHandle<Scalar> d_deltaF_or(m_deltaF_or, access_location::device, access_mode::read);
+
+                    ArrayHandle<unsigned int> d_deltaF_nor_nneigh(m_deltaF_nor_nneigh, access_location::device, access_mode::read);
+                    ArrayHandle<unsigned int> d_deltaF_nor_nlist(m_deltaF_nor_nlist, access_location::device, access_mode::read);
+                    ArrayHandle<unsigned int> d_deltaF_nor_len(m_deltaF_nor_len, access_location::device, access_mode::read);
+                    ArrayHandle<unsigned int> d_deltaF_nor_k(m_deltaF_nor_k, access_location::device, access_mode::read);
+                    ArrayHandle<Scalar> d_deltaF_nor(m_deltaF_nor, access_location::device, access_mode::read);
+
                     // reset condition flag
                     hipMemsetAsync(d_condition.data, 0, sizeof(unsigned int));
                     if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
@@ -1648,6 +1670,18 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         this->m_seed,
                         this->m_exec_conf->getRank()*this->m_nselect + i,
                         timestep,
+                        d_deltaF_or_nneigh.data,
+                        d_deltaF_or_len.data,
+                        d_deltaF_or_nlist.data,
+                        d_deltaF_or.data,
+                        m_deltaF_or_maxlen,
+                        d_deltaF_nor_nneigh.data,
+                        d_deltaF_nor_len.data,
+                        d_deltaF_nor_k.data,
+                        d_deltaF_nor_nlist.data,
+                        d_deltaF_nor.data,
+                        m_deltaF_nor_maxlen,
+                        have_auxiliary_variables,
                         block_size,
                         tpp);
 
@@ -1655,8 +1689,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         CHECK_CUDA_ERROR();
                     m_tuner_accept->end();
                     this->m_exec_conf->endMultiGPU();
-
                     }
+
                 // update reject flags
                 std::swap(m_reject,  m_reject_out);
 
@@ -1819,6 +1853,174 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocate()
         #endif
         }
     return reallocate || maxn_changed;
+    }
+
+template< class Shape >
+bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
+    {
+    // read back overflow condition and resize as necessary
+    ArrayHandle<unsigned int> h_overflow_or(m_overflow_or, access_location::host, access_mode::read);
+    unsigned int req_maxn = *h_overflow_or.data;
+
+    bool maxn_changed = false;
+    if (req_maxn > m_deltaF_or_maxlen)
+        {
+        m_deltaF_or_maxlen = req_maxn;
+        maxn_changed = true;
+        }
+
+    unsigned int req_size_nlist = m_deltaF_or_maxlen*this->m_pdata->getN();
+
+    // resize
+    bool reallocate_or = req_size_nlist > m_deltaF_or.getNumElements();
+    if (reallocate_or)
+        {
+        this->m_exec_conf->msg->notice(9) << "hpmc resizing depletants "
+            << m_deltaF_or.getNumElements() << " -> " << req_size_nlist << std::endl;
+
+        GlobalArray<Scalar> deltaF_or(req_size_nlist, this->m_exec_conf);
+        m_deltaF_or.swap(deltaF_or);
+        TAG_ALLOCATION(m_deltaF_or);
+
+        GlobalArray<unsigned int> deltaF_or_nlist(req_size_nlist, this->m_exec_conf);
+        m_deltaF_or_nlist.swap(deltaF_or_nlist);
+        TAG_ALLOCATION(m_deltaF_or_nlist);
+
+        GlobalArray<unsigned int> deltaF_or_len(req_size_nlist, this->m_exec_conf);
+        m_deltaF_or_len.swap(deltaF_or_len);
+        TAG_ALLOCATION(m_deltaF_or_len);
+
+        #ifdef __HIP_PLATFORM_NVCC__
+        // update memory hints
+        if (this->m_exec_conf->allConcurrentManagedAccess())
+            {
+            // set memory hints
+            auto gpu_map = this->m_exec_conf->getGPUIds();
+            for (unsigned int idev = 0; idev < this->m_exec_conf->getNumActiveGPUs(); ++idev)
+                {
+                auto range = this->m_pdata->getGPUPartition().getRange(idev);
+
+                unsigned int nelem = range.second-range.first;
+                if (nelem == 0)
+                    continue;
+
+                cudaMemAdvise(m_deltaF_or.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(Scalar)*nelem*m_deltaF_or_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_or.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(Scalar)*nelem*m_deltaF_or_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_or_nlist.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_or_nlist.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_or_len.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_or_len.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
+                    gpu_map[idev]);
+                CHECK_CUDA_ERROR();
+                }
+            }
+        #endif
+        }
+
+    // read back overflow condition and resize as necessary
+    ArrayHandle<unsigned int> h_overflow_nor(m_overflow_nor, access_location::host, access_mode::read);
+    req_maxn = *h_overflow_nor.data;
+
+    if (req_maxn > m_deltaF_nor_maxlen)
+        {
+        m_deltaF_nor_maxlen = req_maxn;
+        maxn_changed = true;
+        }
+
+    req_size_nlist = m_deltaF_nor_maxlen*this->m_pdata->getN();
+
+    // resize
+    bool reallocate_nor = req_size_nlist > m_deltaF_nor.getNumElements();
+    if (reallocate_nor)
+        {
+        this->m_exec_conf->msg->notice(9) << "hpmc resizing depletants "
+            << m_deltaF_nor.getNumElements() << " -> " << req_size_nlist << std::endl;
+
+        GlobalArray<Scalar> deltaF_nor(req_size_nlist, this->m_exec_conf);
+        m_deltaF_nor.swap(deltaF_nor);
+        TAG_ALLOCATION(m_deltaF_nor);
+
+        GlobalArray<unsigned int> deltaF_nor_nlist(req_size_nlist, this->m_exec_conf);
+        m_deltaF_nor_nlist.swap(deltaF_nor_nlist);
+        TAG_ALLOCATION(m_deltaF_nor_nlist);
+
+        GlobalArray<unsigned int> deltaF_nor_len(req_size_nlist, this->m_exec_conf);
+        m_deltaF_nor_len.swap(deltaF_nor_len);
+        TAG_ALLOCATION(m_deltaF_nor_len);
+
+        GlobalArray<unsigned int> deltaF_nor_k(req_size_nlist, this->m_exec_conf);
+        m_deltaF_nor_k.swap(deltaF_nor_k);
+        TAG_ALLOCATION(m_deltaF_nor_k);
+
+        #ifdef __HIP_PLATFORM_NVCC__
+        // update memory hints
+        if (this->m_exec_conf->allConcurrentManagedAccess())
+            {
+            // set memory hints
+            auto gpu_map = this->m_exec_conf->getGPUIds();
+            for (unsigned int idev = 0; idev < this->m_exec_conf->getNumActiveGPUs(); ++idev)
+                {
+                auto range = this->m_pdata->getGPUPartition().getRange(idev);
+
+                unsigned int nelem = range.second-range.first;
+                if (nelem == 0)
+                    continue;
+
+                cudaMemAdvise(m_deltaF_nor.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(Scalar)*nelem*m_deltaF_nor_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_nor.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(Scalar)*nelem*m_deltaF_nor_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_nor_nlist.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_nor_nlist.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_nor_len.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_nor_len.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_nor_k.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_nor_k.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    gpu_map[idev]);
+
+                CHECK_CUDA_ERROR();
+                }
+            }
+        #endif
+        }
+
+    return reallocate_or || reallocate_nor || maxn_changed;
     }
 
 template< class Shape >

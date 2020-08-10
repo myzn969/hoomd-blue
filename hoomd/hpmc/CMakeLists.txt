@@ -61,9 +61,9 @@ set(_hpmc_headers
     IntegratorHPMCMonoGPUTypes.cuh
     IntegratorHPMCMonoGPUDepletants.cuh
     IntegratorHPMCMonoGPUDepletantsTypes.cuh
-    IntegratorHPMCMonoGPUDepletantsAuxilliaryPhase1.cuh
-    IntegratorHPMCMonoGPUDepletantsAuxilliaryPhase2.cuh
-    IntegratorHPMCMonoGPUDepletantsAuxilliaryTypes.cuh
+    IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase1.cuh
+    IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase2.cuh
+    IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh
     IntegratorHPMCMonoGPUJIT.inc
     IntegratorHPMCMonoGPU.h
     IntegratorHPMCMono.h
@@ -108,8 +108,8 @@ set(_hpmc_kernel_templates kernel_free_volume
                            kernel_cluster_overlaps
                            kernel_cluster_depletants
                            kernel_cluster_transform
-                           kernel_depletants_auxilliary_phase1
-                           kernel_depletants_auxilliary_phase2)
+                           kernel_depletants_auxiliary_phase1
+                           kernel_depletants_auxiliary_phase2)
 
 if(ENABLE_HIP)
     # expand the shape x GPU kernel matrix of template instantiations

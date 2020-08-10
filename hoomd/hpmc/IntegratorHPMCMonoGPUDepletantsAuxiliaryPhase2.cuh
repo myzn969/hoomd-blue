@@ -18,7 +18,7 @@
 #include "GPUHelpers.cuh"
 #include "HPMCMiscFunctions.h"
 
-#include "IntegratorHPMCMonoGPUDepletantsAuxilliaryTypes.cuh"
+#include "IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh"
 #include "IntegratorHPMCMonoGPUDepletants.cuh"
 
 #include <cassert>
@@ -44,7 +44,7 @@ template< class Shape, unsigned int max_threads, bool pairwise >
 #ifdef __HIP_PLATFORM_NVCC__
 __launch_bounds__(max_threads)
 #endif
-__global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
+__global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                                      const Scalar4 *d_trial_orientation,
                                      const unsigned int *d_trial_move_type,
                                      const Scalar4 *d_postype,
@@ -65,7 +65,6 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                                      const unsigned int dim,
                                      const BoxDim box,
                                      const unsigned int select,
-                                     unsigned int *d_reject_out_of_cell,
                                      const typename Shape::param_type *d_params,
                                      unsigned int max_queue_size,
                                      unsigned int max_extra_bytes,
@@ -74,20 +73,26 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                                      const Index2D depletant_idx,
                                      hpmc_implicit_counters_t *d_implicit_counters,
                                      const unsigned int *d_update_order_by_ptl,
-                                     const unsigned int *d_reject_in,
                                      const unsigned int ntrial,
                                      const unsigned int *d_tag,
                                      const Scalar4 *d_vel,
                                      const Scalar4 *d_trial_vel,
-                                     int *d_deltaF_int,
+                                     unsigned int *d_deltaF_nor_nneigh,
+                                     unsigned int *d_deltaF_nor_nlist,
+                                     unsigned int *d_deltaF_nor_len,
+                                     unsigned int *d_deltaF_nor_k,
+                                     Scalar *d_deltaF_nor,
+                                     const unsigned int max_len_deltaF,
+                                     unsigned int *d_overflow,
                                      bool repulsive,
                                      unsigned int work_offset,
                                      unsigned int max_depletant_queue_size,
                                      const unsigned int *d_n_depletants,
+                                     const unsigned int max_len,
+                                     unsigned int *d_req_len,
                                      const unsigned int global_work_offset,
                                      const unsigned int n_work_local,
-                                     const unsigned int max_n_depletants
-                                     )
+                                     const unsigned int max_n_depletants)
     {
     // variables to tell what type of thread we are
     unsigned int group = threadIdx.y;
@@ -99,10 +104,8 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
     unsigned int err_count = 0;
 
     // shared particle configuation
-    __shared__ Scalar4 s_orientation_i_new;
-    __shared__ Scalar4 s_orientation_i_old;
-    __shared__ Scalar3 s_pos_i_new;
-    __shared__ Scalar3 s_pos_i_old;
+    __shared__ Scalar4 s_cur_orientation_i;
+    __shared__ Scalar3 s_cur_pos_i;
     __shared__ unsigned int s_type_i;
 
     // shared arrays for per type pair parameters
@@ -115,17 +118,15 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
     __shared__ unsigned int s_adding_depletants;
     __shared__ unsigned int s_depletant_queue_size;
 
-    // per particle free energy in units of log(1+1/ntrial)
-    __shared__ int s_deltaF_int;
-
     // load the per type pair parameters into shared memory
     HIP_DYNAMIC_SHARED( char, s_data)
     typename Shape::param_type *s_params = (typename Shape::param_type *)(&s_data[0]);
     Scalar4 *s_orientation_group = (Scalar4*)(s_params + num_types);
     Scalar3 *s_pos_group = (Scalar3*)(s_orientation_group + n_groups);
     unsigned int *s_check_overlaps = (unsigned int *) (s_pos_group + n_groups);
-    unsigned int *s_overlap_group = (unsigned int *) (s_check_overlaps + overlap_idx.getNumElements());
-    unsigned int *s_queue_j = (unsigned int*)(s_overlap_group + n_groups);
+    unsigned int *s_len_group = (unsigned int *) (s_check_overlaps + overlap_idx.getNumElements());
+    unsigned int *s_overlap_idx_list = (unsigned int *) (s_len_group + n_groups);
+    unsigned int *s_queue_j = (unsigned int*)(s_overlap_idx_list + max_len*n_groups);
     unsigned int *s_queue_gid = (unsigned int*)(s_queue_j + max_queue_size);
     unsigned int *s_queue_didx = (unsigned int *)(s_queue_gid + max_queue_size);
     unsigned int *s_queue_itrial = (unsigned int *)(s_queue_didx + max_depletant_queue_size);
@@ -169,55 +170,12 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
         {
         s_overlap_checks = 0;
         s_overlap_err_count = 0;
-
-        s_deltaF_int = 0;
         }
 
     __syncthreads();
 
     // identify the particle that this block handles
     unsigned int i = blockIdx.x + work_offset;
-
-    // if this particle is rejected a priori because it has left the cell or is in
-    // an inactive region, don't check overlaps
-    if (d_reject_out_of_cell[i] || !d_trial_move_type[i])
-        return;
-
-    // load updated particle position
-    if (master && group == 0)
-        {
-        Scalar4 postype_i_new = d_trial_postype[i];
-        Scalar4 postype_i_old = d_postype[i];
-        s_pos_i_new = make_scalar3(postype_i_new.x, postype_i_new.y, postype_i_new.z);
-        s_pos_i_old = make_scalar3(postype_i_old.x, postype_i_old.y, postype_i_old.z);
-        s_type_i = __scalar_as_int(postype_i_new.w);
-
-        s_orientation_i_new = d_trial_orientation[i];
-        s_orientation_i_old = d_orientation[i];
-        }
-
-    // sync so that s_pos_i_old etc. are available
-    __syncthreads();
-
-    unsigned int overlap_checks = 0;
-
-    // find the cell this particle should be in
-    unsigned int my_cell = computeParticleCell(s_pos_i_old, box, ghost_width,
-        cell_dim, ci, false);
-
-    // the order of this particle in the chain
-    unsigned int update_order_i = d_update_order_by_ptl[i];
-    unsigned int seed_i_old = __scalar_as_int(d_vel[i].x);
-    unsigned int seed_i_new = __scalar_as_int(d_trial_vel[i].x);
-    unsigned int tag_i = d_tag[i];
-
-    if (master && group == 0)
-        {
-        s_depletant_queue_size = 0;
-        s_adding_depletants = 1;
-        }
-
-    __syncthreads();
 
     // unpack the block index to find out which work element this group handles
     unsigned int block = blockIdx.z*gridDim.y + blockIdx.y;
@@ -229,11 +187,46 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
     // we always have a number of blocks that is a multiple of two
     bool new_config = block & 1;
 
+    if ((!d_trial_move_type[i] || i >= N_local) && new_config)
+        return;
+
+    // load updated particle position
+    if (master && group == 0)
+        {
+        Scalar4 cur_postype = new_config ? d_trial_postype[i] : d_postype[i];
+        s_cur_pos_i = make_scalar3(cur_postype.x, cur_postype.y, cur_postype.z);
+        s_type_i = __scalar_as_int(cur_postype.w);
+        s_cur_orientation_i = new_config ? d_trial_orientation[i] : d_orientation[i];
+        }
+
+    // sync so that s_cur_pos_i etc. are available
+    __syncthreads();
+
+    unsigned int overlap_checks = 0;
+
+    // the order of this particle in the chain
+    unsigned int cur_seed_i = new_config ? __scalar_as_int(d_trial_vel[i].x) : __scalar_as_int(d_vel[i].x);
+    unsigned int tag_i = d_tag[i];
+
+    if (master && group == 0)
+        {
+        s_depletant_queue_size = 0;
+        s_adding_depletants = 1;
+        }
+
+    __syncthreads();
+
+    // find the cell this particle should be in
+    Scalar4 postype_i_old = d_postype[i];
+    unsigned int my_cell = computeParticleCell(
+        make_scalar3(postype_i_old.x,postype_i_old.y,postype_i_old.z),
+        box, ghost_width, cell_dim, ci, false);
+
     detail::OBB obb_i;
         {
         // get shape OBB
-        Shape shape_i(quat<Scalar>(!new_config ? d_orientation[i] : d_trial_orientation[i]), s_params[s_type_i]);
-        obb_i = shape_i.getOBB(new_config ? vec3<Scalar>(s_pos_i_new) : vec3<Scalar>(s_pos_i_old));
+        Shape shape_i(quat<Scalar>(s_cur_orientation_i), s_params[s_type_i]);
+        obb_i = shape_i.getOBB(vec3<Scalar>(s_cur_pos_i));
 
         // extend by depletant radius
         Shape shape_test_a(quat<Scalar>(), s_params[depletant_type_a]);
@@ -247,7 +240,10 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
         }
 
     /*
-     * Phase 1: insert into particle i's excluded volume
+     * Phase 2: insert into particle j's excluded volume
+     *
+     * This phase is similar to the first one, except that we are inserting into neighbor i
+     * of every particle j, updating particle j's free energy instead of our own one
      */
 
     unsigned int n_depletants = 0;
@@ -266,10 +262,10 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
 
         while (s_depletant_queue_size < max_depletant_queue_size && local_work_idx < n_work_local)
             {
-            if (i_trial < ntrial && i_dep < n_depletants_i)
+            if (i_dep < n_depletants_i && i_trial < ntrial)
                 {
                 // one RNG per depletant and trial insertion
-                hoomd::RandomGenerator rng(hoomd::RNGIdentifier::HPMCDepletants, new_config ? seed_i_new : seed_i_old,
+                hoomd::RandomGenerator rng(hoomd::RNGIdentifier::HPMCDepletants, cur_seed_i,
                     i_dep, i_trial, depletant_idx(depletant_type_a,depletant_type_b));
 
                 // filter depletants overlapping with particle i
@@ -289,8 +285,8 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
 
                 Shape shape_i(quat<Scalar>(), s_params[s_type_i]);
                 if (shape_i.hasOrientation())
-                    shape_i.orientation = quat<Scalar>(new_config ? s_orientation_i_new : s_orientation_i_old);
-                vec3<Scalar> r_ij = vec3<Scalar>(new_config ? s_pos_i_new : s_pos_i_old) - pos_test;
+                    shape_i.orientation = quat<Scalar>(s_cur_orientation_i);
+                vec3<Scalar> r_ij = vec3<Scalar>(s_cur_pos_i) - pos_test;
                 overlap_checks ++;
                 bool overlap_i_a = (s_check_overlaps[overlap_idx(s_type_i, depletant_type_a)]
                     && check_circumsphere_overlap(r_ij, shape_test_a, shape_i)
@@ -322,7 +318,6 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                         }
                     } // end if add_to_queue
                 }
-
             // advance local depletant idx
             local_work_idx += group_size*n_groups*blocks_per_depletant;
 
@@ -359,8 +354,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
             unsigned int i_trial_queue = s_queue_itrial[group];
 
             hoomd::RandomGenerator rng(hoomd::RNGIdentifier::HPMCDepletants,
-                new_config ? seed_i_new : seed_i_old,
-                i_dep_queue, i_trial_queue,
+                cur_seed_i, i_dep_queue, i_trial_queue,
                 depletant_idx(depletant_type_a,depletant_type_b));
 
             // depletant position and orientation
@@ -382,7 +376,10 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
             }
 
         if (master)
-            s_overlap_group[group] = 0;
+            {
+            // stores overlaps
+            s_len_group[group] = 0;
+            }
 
         __syncthreads();
 
@@ -395,7 +392,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
             excell_size = d_excell_size[my_cell];
 
             if (master)
-                overlap_checks += excell_size;
+                overlap_checks += 2*excell_size;
             }
 
         // loop while still searching
@@ -409,37 +406,26 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                 {
                 // prefetch j
                 unsigned int j, next_j = 0;
-                if (k < excell_size)
-                    next_j = __ldg(&d_excell_idx[excli(k, my_cell)]);
+                if ((k >> 1) < excell_size)
+                    next_j = __ldg(&d_excell_idx[excli(k >> 1, my_cell)]);
 
                 // add to the queue as long as the queue is not full, and we have not yet reached the end of our own list
-                // and as long as no overlaps have been found
-                while (s_queue_size < max_queue_size && k < excell_size && !s_overlap_group[group])
+                while (s_queue_size < max_queue_size && (k >> 1) < excell_size)
                     {
-                    // build some shapes, but we only need them to get diameters, so don't load orientations
+                    // which configuration of particle j are we checking against?
+                    bool old = k & 1;
 
                     // prefetch next j
                     k += group_size;
                     j = next_j;
 
-                    if (k < excell_size)
-                        next_j = __ldg(&d_excell_idx[excli(k, my_cell)]);
+                    if ((k>>1) < excell_size)
+                        next_j = __ldg(&d_excell_idx[excli(k >> 1, my_cell)]);
 
                     unsigned int tag_j = d_tag[j];
 
-                    // has j been updated? ghost particles are not updated
-
-                    // these multiple gmem loads present a minor optimization opportunity for the future
-                    bool j_has_been_updated = j < N_local &&
-                        d_update_order_by_ptl[j] < update_order_i &&
-                        !d_reject_in[j] &&
-                        d_trial_move_type[j];
-
-                    // true if particle j is in the old configuration
-                    bool old = !j_has_been_updated;
-
                     // read in position of neighboring particle, do not need it's orientation for circumsphere check
-                    // for ghosts always load particle data
+                    // for ghosts always load old particle data
                     Scalar4 postype_j = (old || j >= N_local) ? d_postype[j] : d_trial_postype[j];
                     unsigned int type_j = __scalar_as_int(postype_j.w);
                     Shape shape_j(quat<Scalar>(), s_params[type_j]);
@@ -449,18 +435,18 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                     Shape shape_test_a(quat<Scalar>(s_orientation_group[group]), s_params[depletant_type_a]);
                     Shape shape_test_b(quat<Scalar>(s_orientation_group[group]), s_params[depletant_type_b]);
 
-                    // put particle j into the coordinate system of the test particle
-                    vec3<Scalar> r_jk = vec3<Scalar>(postype_j) - vec3<Scalar>(pos_test);
-                    r_jk = vec3<Scalar>(box.minImage(vec_to_scalar3(r_jk)));
+                    // put particle j into the coordinate system of particle i
+                    vec3<Scalar> r_j_test = vec3<Scalar>(pos_test) - vec3<Scalar>(postype_j);
+                    r_j_test = vec3<Scalar>(box.minImage(vec_to_scalar3(r_j_test)));
 
                     bool insert_in_queue = i != j && (old || j < N_local) && tag_i < tag_j;
 
                     bool circumsphere_overlap = s_check_overlaps[overlap_idx(depletant_type_a, type_j)] &&
-                        check_circumsphere_overlap(r_jk, shape_test_a, shape_j);
+                        check_circumsphere_overlap(r_j_test, shape_j, shape_test_a);
 
                     circumsphere_overlap |= pairwise &&
                         s_check_overlaps[overlap_idx(depletant_type_b, type_j)] &&
-                        check_circumsphere_overlap(r_jk, shape_test_b, shape_j);
+                        check_circumsphere_overlap(r_j_test, shape_j, shape_test_b);
 
                     insert_in_queue &= circumsphere_overlap;
 
@@ -511,18 +497,17 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
 
                 // build shape j from global memory
                 Scalar4 postype_j = check_old ? d_postype[check_j] : d_trial_postype[check_j];
-                Scalar4 orientation_j = make_scalar4(1,0,0,0);
                 unsigned int type_j = __scalar_as_int(postype_j.w);
-                Shape shape_j(quat<Scalar>(orientation_j), s_params[type_j]);
+                Shape shape_j(quat<Scalar>(), s_params[type_j]);
                 if (shape_j.hasOrientation())
                     shape_j.orientation = quat<Scalar>(check_old ? d_orientation[check_j] : d_trial_orientation[check_j]);
 
                 // put particle j into the coordinate system of the test particle
-                vec3<Scalar> r_jk = vec3<Scalar>(postype_j) - vec3<Scalar>(pos_test);
-                r_jk = vec3<Scalar>(box.minImage(vec_to_scalar3(r_jk)));
+                vec3<Scalar> r_j_test = vec3<Scalar>(pos_test) - vec3<Scalar>(postype_j);
+                r_j_test = vec3<Scalar>(box.minImage(vec_to_scalar3(r_j_test)));
 
                 bool overlap_j_a = s_check_overlaps[overlap_idx(depletant_type_a, type_j)] &&
-                    test_overlap(r_jk, shape_test_a, shape_j, err_count);
+                    test_overlap(r_j_test, shape_j, shape_test_a, err_count);
 
                 bool overlap_j_b = overlap_j_a;
                 bool overlap_i_a = true;
@@ -531,16 +516,15 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                 if (pairwise)
                     {
                     overlap_j_b = s_check_overlaps[overlap_idx(depletant_type_b, type_j)] &&
-                        test_overlap(r_jk, shape_test_b, shape_j, err_count);
+                        test_overlap(r_j_test, shape_j, shape_test_b, err_count);
 
                     if (overlap_j_b)
                         {
                         // check depletant a against i
                         Shape shape_i(quat<Scalar>(), s_params[s_type_i]);
                         if (shape_i.hasOrientation())
-                            shape_i.orientation = quat<Scalar>(new_config ? s_orientation_i_new : s_orientation_i_old);
-                        vec3<Scalar> r_ik = vec3<Scalar>(pos_test) -
-                            vec3<Scalar>(new_config ? s_pos_i_new : s_pos_i_old);
+                            shape_i.orientation = quat<Scalar>(s_cur_orientation_i);
+                        vec3<Scalar> r_ik = vec3<Scalar>(pos_test) - vec3<Scalar>(s_cur_pos_i);
                         overlap_i_a = (s_check_overlaps[overlap_idx(s_type_i, depletant_type_a)]
                             && check_circumsphere_overlap(r_ik, shape_i, shape_test_a)
                             && test_overlap(r_ik, shape_i, shape_test_a, err_count));
@@ -551,9 +535,8 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                         // check depletant b against i
                         Shape shape_i(quat<Scalar>(), s_params[s_type_i]);
                         if (shape_i.hasOrientation())
-                            shape_i.orientation = quat<Scalar>(new_config ? s_orientation_i_new : s_orientation_i_old);
-                        vec3<Scalar> r_ik = vec3<Scalar>(pos_test) -
-                            vec3<Scalar>(new_config ? s_pos_i_new : s_pos_i_old);
+                            shape_i.orientation = quat<Scalar>(s_cur_orientation_i);
+                        vec3<Scalar> r_ik = vec3<Scalar>(pos_test) - vec3<Scalar>(s_cur_pos_i);
                         overlap_i_b = (s_check_overlaps[overlap_idx(s_type_i, depletant_type_b)]
                             && check_circumsphere_overlap(r_ik, shape_i, shape_test_b)
                             && test_overlap(r_ik, shape_i, shape_test_b, err_count));
@@ -561,25 +544,69 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                     }
 
                 if ((overlap_i_a && overlap_j_b) || (overlap_i_b && overlap_j_a))
-                    atomicAdd(&s_overlap_group[check_group],1);
+                    {
+                    // store the overlapping particle index in dynamically allocated shared memory
+                    unsigned int position = atomicAdd(&s_len_group[check_group], 1);
+                    if (position < max_len)
+                        s_overlap_idx_list[check_group*max_len+position] = check_j_flag;
+                    }
                 } // end if (processing neighbor)
 
             // threads that need to do more looking set the still_searching flag
             __syncthreads();
             if (master && group == 0)
                 s_queue_size = 0;
-            if (!s_overlap_group[group] && active && k < excell_size)
+            if (active && (k >> 1) < excell_size)
                 atomicAdd(&s_still_searching, 1);
             __syncthreads();
-
             } // end while (s_still_searching)
 
-        if (active && master && s_overlap_group[group])
+        if (active && s_len_group[group] <= max_len)
             {
-            if ((new_config && !repulsive) || (!new_config && repulsive))
-                atomicAdd(&s_deltaF_int, 1); // numerator
-            else
-                atomicAdd(&s_deltaF_int, -1); // denominator
+            // go through the list of overlaps for this group
+            for (unsigned int k = offset; k < s_len_group[group]; k += group_size)
+                {
+                unsigned int overlap_k_flag = s_overlap_idx_list[group*max_len+k];
+                unsigned int overlap_k = overlap_k_flag >> 1;
+                bool overlap_old_k = overlap_k_flag & 1;
+
+                // write necessary conditions, plus one for the sentinel
+                unsigned int nterms = s_len_group[group];
+                unsigned int n = atomicAdd_system(&d_deltaF_nor_nneigh[overlap_k], nterms);
+
+                if (n < max_len_deltaF)
+                    {
+                    d_deltaF_nor_len[overlap_k*max_len_deltaF + n] = nterms;
+                    d_deltaF_nor_k[overlap_k*max_len_deltaF + n] = (i << 1) | !new_config;
+
+                    // add to free energy of particle k
+                    if ((!overlap_old_k && !repulsive) || (overlap_old_k && repulsive))
+                        d_deltaF_nor[overlap_k*max_len_deltaF+n] = log(1+1/(Scalar)ntrial); // numerator
+                    else
+                        d_deltaF_nor[overlap_k*max_len_deltaF+n] = -log(1+1/(Scalar)ntrial); // denominator
+                    }
+                else if (n + nterms > max_len_deltaF)
+                    {
+                    atomicMax_system(d_overflow, n + nterms);
+                    }
+
+                unsigned int l = 0;
+                for (unsigned int m = 0; m < nterms; ++m)
+                    {
+                    unsigned int overlap_m_flag = s_overlap_idx_list[group*max_len+m];
+                    if (n + l < max_len_deltaF)
+                        {
+                        // store neighbor information
+                        d_deltaF_nor_nlist[overlap_k*max_len_deltaF + n + l++] = overlap_m_flag;
+                        }
+                    }
+                }
+            }
+
+        // shared mem overflowed?
+        if (active && master && s_len_group[group] > max_len)
+            {
+            atomicMax_system(d_req_len, s_len_group[group]);
             }
 
         // do we still need to process depletants?
@@ -590,12 +617,6 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
             atomicAdd(&s_adding_depletants, 1);
         __syncthreads();
         } // end loop over depletants
-
-    // write out free energy for this particle
-    if (master && group == 0)
-        {
-        atomicAdd(&d_deltaF_int[i], s_deltaF_int);
-        }
 
     if (err_count > 0)
         atomicAdd(&s_overlap_err_count, err_count);
@@ -635,16 +656,15 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
         }
     }
 
-//! Launcher for hpmc_insert_depletants_phase1 kernel with templated launch bounds
+//! Launcher for hpmc_insert_depletants_phase2 kernel with templated launch bounds
 template< class Shape, bool pairwise, unsigned int cur_launch_bounds>
-void depletants_launcher_phase1(const hpmc_args_t& args,
+void depletants_launcher_phase2(const hpmc_args_t& args,
     const hpmc_implicit_args_t& implicit_args,
-    const hpmc_auxilliary_args_t& auxilliary_args,
+    const hpmc_auxiliary_args_t& auxiliary_args,
     const typename Shape::param_type *params,
     unsigned int max_threads,
     detail::int2type<cur_launch_bounds>)
     {
-    #if 0
     if (max_threads == cur_launch_bounds*MIN_BLOCK_SIZE)
         {
         // determine the maximum block size and clamp the input block size down
@@ -654,7 +674,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
         if (max_block_size == -1)
             {
             hipFuncGetAttributes(&attr,
-                reinterpret_cast<const void*>(&kernel::hpmc_insert_depletants_phase1<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>));
+                reinterpret_cast<const void*>(&kernel::hpmc_insert_depletants_phase2<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>));
             max_block_size = attr.maxThreadsPerBlock;
             }
 
@@ -674,6 +694,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
         unsigned int shared_bytes = n_groups *(sizeof(Scalar4) + sizeof(Scalar3) + sizeof(unsigned int)) +
                                     max_queue_size*2*sizeof(unsigned int) +
                                     max_depletant_queue_size*2*sizeof(unsigned int) +
+                                    n_groups*auxiliary_args.max_len*sizeof(unsigned int) +
                                     min_shared_bytes;
 
         if (min_shared_bytes >= args.devprop.sharedMemPerBlock)
@@ -694,6 +715,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
             shared_bytes = n_groups * (sizeof(Scalar4) + sizeof(Scalar3) + sizeof(unsigned int)) +
                            max_queue_size*2*sizeof(unsigned int) +
                            max_depletant_queue_size*2*sizeof(unsigned int) +
+                           n_groups*auxiliary_args.max_len*sizeof(unsigned int) +
                            min_shared_bytes;
             }
 
@@ -713,15 +735,19 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
         // setup the grid to run the kernel
         dim3 threads(1, n_groups, tpp);
 
-        // iterate over particles of this rank only
-        for (int idev = auxilliary_args.gpu_partition_rank.getNumActiveGPUs() - 1; idev >= 0; --idev)
+        for (int idev = auxiliary_args.gpu_partition_rank.getNumActiveGPUs() - 1; idev >= 0; --idev)
             {
-            auto range = auxilliary_args.gpu_partition_rank.getRangeAndSetGPU(idev);
+            auto range = auxiliary_args.gpu_partition_rank.getRangeAndSetGPU(idev);
 
-            if (range.first == range.second)
-                continue;
+            unsigned int nwork = range.second - range.first;
 
-            unsigned int blocks_per_particle = auxilliary_args.nwork_local[idev]/
+            // add ghosts to final range
+            if (idev == (int)auxiliary_args.gpu_partition_rank.getNumActiveGPUs()-1 && auxiliary_args.add_ghosts)
+                nwork += auxiliary_args.n_ghosts;
+
+            if (!nwork) continue;
+
+            unsigned int blocks_per_particle = auxiliary_args.nwork_local[idev]/
                 (implicit_args.depletants_per_thread*n_groups*tpp) + 1;
 
             dim3 grid( range.second-range.first, 2*blocks_per_particle, 1);
@@ -741,18 +767,15 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
             assert(args.d_excell_idx);
             assert(args.d_excell_size);
             assert(args.d_check_overlaps);
-            assert(args.d_reject_out_of_cell);
             assert(implicit_args.d_implicit_count);
             assert(args.d_update_order_by_ptl);
-            assert(args.d_reject_in);
-            assert(auxilliary_args.d_tag);
-            assert(auxilliary_args.d_vel);
-            assert(auxilliary_args.d_trial_vel);
-            assert(auxilliary_args.d_deltaF_int);
-            assert(auxilliary_args.d_n_depletants_ntrial);
+            assert(auxiliary_args.d_tag);
+            assert(auxiliary_args.d_vel);
+            assert(auxiliary_args.d_trial_vel);
+            assert(auxiliary_args.d_n_depletants_ntrial);
 
-            hipLaunchKernelGGL((kernel::hpmc_insert_depletants_phase1<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>),
-                dim3(grid), dim3(threads), shared_bytes, auxilliary_args.streams_phase1[idev],
+            hipLaunchKernelGGL((kernel::hpmc_insert_depletants_phase2<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>),
+                dim3(grid), dim3(threads), shared_bytes, auxiliary_args.streams_phase2[idev],
                                  args.d_trial_postype,
                                  args.d_trial_orientation,
                                  args.d_trial_move_type,
@@ -774,7 +797,6 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
                                  args.dim,
                                  args.box,
                                  args.select,
-                                 args.d_reject_out_of_cell,
                                  params,
                                  max_queue_size,
                                  max_extra_bytes,
@@ -783,39 +805,45 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
                                  implicit_args.depletant_idx,
                                  implicit_args.d_implicit_count + idev*implicit_args.implicit_counters_pitch,
                                  args.d_update_order_by_ptl,
-                                 args.d_reject_in,
-                                 auxilliary_args.ntrial,
-                                 auxilliary_args.d_tag,
-                                 auxilliary_args.d_vel,
-                                 auxilliary_args.d_trial_vel,
-                                 auxilliary_args.d_deltaF_int,
+                                 auxiliary_args.ntrial,
+                                 auxiliary_args.d_tag,
+                                 auxiliary_args.d_vel,
+                                 auxiliary_args.d_trial_vel,
+                                 auxiliary_args.d_deltaF_nor_nneigh,
+                                 auxiliary_args.d_deltaF_nor_nlist,
+                                 auxiliary_args.d_deltaF_nor_len,
+                                 auxiliary_args.d_deltaF_nor_k,
+                                 auxiliary_args.d_deltaF_nor,
+                                 auxiliary_args.deltaF_nor_maxlen,
+                                 auxiliary_args.d_overflow_nor,
                                  implicit_args.repulsive,
                                  range.first,
                                  max_depletant_queue_size,
-                                 auxilliary_args.d_n_depletants_ntrial,
-                                 auxilliary_args.work_offset[idev],
-                                 auxilliary_args.nwork_local[idev],
+                                 auxiliary_args.d_n_depletants_ntrial,
+                                 auxiliary_args.max_len,
+                                 auxiliary_args.d_req_len,
+                                 auxiliary_args.work_offset[idev],
+                                 auxiliary_args.nwork_local[idev],
                                  implicit_args.max_n_depletants[idev]);
             }
         }
     else
         {
-        depletants_launcher_phase1<Shape, pairwise>(args,
+        depletants_launcher_phase2<Shape, pairwise>(args,
             implicit_args,
-            auxilliary_args,
+            auxiliary_args,
             params,
             max_threads,
             detail::int2type<cur_launch_bounds/2>());
         }
-    #endif
     }
 
 } // end namespace kernel
 
-//! Kernel driver for kernel::insert_depletants_phase1()
+//! Kernel driver for kernel::insert_depletants_phase2()
 /*! \param args Bundled arguments
     \param implicit_args Bundled arguments related to depletants
-    \param auxilliary_args Bundled arguments for auxillary variable depletants
+    \param implicit_args Bundled arguments related to auxiliary variable depletants
     \param d_params Per-type shape parameters
 
     This templatized method is the kernel driver for HPMC update of any shape. It is instantiated for every shape at the
@@ -824,12 +852,11 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
     \ingroup hpmc_kernels
 */
 template< class Shape >
-void hpmc_depletants_auxilliary_phase1(const hpmc_args_t& args,
+void hpmc_depletants_auxiliary_phase2(const hpmc_args_t& args,
                                        const hpmc_implicit_args_t& implicit_args,
-                                       const hpmc_auxilliary_args_t& auxilliary_args,
+                                       const hpmc_auxiliary_args_t& auxiliary_args,
                                        const typename Shape::param_type *params)
     {
-    #if 0
     // select the kernel template according to the next power of two of the block size
     unsigned int launch_bounds = MIN_BLOCK_SIZE;
     while (launch_bounds < args.block_size)
@@ -837,23 +864,22 @@ void hpmc_depletants_auxilliary_phase1(const hpmc_args_t& args,
 
     if (implicit_args.depletant_type_a == implicit_args.depletant_type_b)
         {
-        kernel::depletants_launcher_phase1<Shape, false>(args,
+        kernel::depletants_launcher_phase2<Shape, false>(args,
             implicit_args,
-            auxilliary_args,
+            auxiliary_args,
             params,
             launch_bounds,
             detail::int2type<MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
         }
     else
         {
-        kernel::depletants_launcher_phase1<Shape, true>(args,
+        kernel::depletants_launcher_phase2<Shape, true>(args,
             implicit_args,
-            auxilliary_args,
+            auxiliary_args,
             params,
             launch_bounds,
             detail::int2type<MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
         }
-    #endif
     }
 #endif
 

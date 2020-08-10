@@ -136,7 +136,20 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  unsigned int *d_condition,
                  const unsigned int seed,
                  const unsigned int select,
-                 const unsigned int timestep)
+                 const unsigned int timestep,
+                 const unsigned int *d_deltaF_or_nneigh,
+                 const unsigned int *d_deltaF_or_len,
+                 const unsigned int *d_deltaF_or_nlist,
+                 const Scalar *d_deltaF_or,
+                 const unsigned maxn_deltaF_or,
+                 const unsigned int *d_deltaF_nor_nneigh,
+                 const unsigned int *d_deltaF_nor_len,
+                 const unsigned int *d_deltaF_nor_k,
+                 const unsigned int *d_deltaF_nor_nlist,
+                 const Scalar *d_deltaF_nor,
+                 const unsigned int maxn_deltaF_nor,
+                 const bool have_auxiliary_variables
+                 )
     {
     unsigned offset = threadIdx.x;
     unsigned int group_size = blockDim.x;
@@ -155,7 +168,8 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
 
     float *s_energy_old = (float *) sdata;
     float *s_energy_new = (float *) (s_energy_old + n_groups);
-    unsigned int *s_reject = (unsigned int *) (s_energy_new + n_groups);
+    float *s_deltaF = (float *) (s_energy_new + n_groups);
+    unsigned int *s_reject = (unsigned int *) (s_deltaF + n_groups);
 
     bool move_active = false;
     if (active && master)
@@ -163,6 +177,7 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
         s_reject[group] = d_reject_out_of_cell[i];
         s_energy_old[group] = 0.0f;
         s_energy_new[group] = 0.0f;
+        s_deltaF[group] = 0.0f;
         }
 
     if (active)
@@ -273,6 +288,87 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
             if (evaluated)
                 atomicAdd(&s_energy_new[group], energy_new);
             }
+
+        if (have_auxiliary_variables && master)
+            {
+            // depletants with auxiliary ntrial != 0
+            unsigned int nneigh = d_deltaF_or_nneigh[i];
+            unsigned int nterms = 0;
+            for (unsigned int cur_neigh = 0; cur_neigh < nneigh; cur_neigh += nterms)
+                {
+                nterms = d_deltaF_or_len[maxn_deltaF_or*i + cur_neigh];
+
+                bool logical_or = false; // the empty disjunction is false
+                for (unsigned int cur_term = cur_neigh; cur_term < cur_neigh + nterms; ++cur_term)
+                    {
+                    unsigned int j_flag = d_deltaF_or_nlist[maxn_deltaF_or*i + cur_term];
+
+                    unsigned int j = j_flag >> 1;
+                    bool old = j_flag & 1;
+
+                    // has j been updated? ghost particles are not updated
+                    bool j_has_been_updated = j < N && d_trial_move_type[j]
+                        && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
+
+                    if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
+                        {
+                        logical_or = true;
+                        break;
+                        }
+                    }
+
+                if (logical_or)
+                    {
+                    atomicAdd(&s_deltaF[group], d_deltaF_or[maxn_deltaF_or*i + cur_neigh]);
+                    }
+                } // end loop over terms
+
+            nneigh = d_deltaF_nor_nneigh[i];
+            nterms = 0;
+            for (unsigned int cur_neigh = 0; cur_neigh < nneigh; cur_neigh += nterms)
+                {
+                nterms = d_deltaF_nor_len[maxn_deltaF_nor*i + cur_neigh];
+                unsigned int k_flag = d_deltaF_nor_k[maxn_deltaF_nor*i + cur_neigh];
+
+                unsigned int k = k_flag >> 1;
+                unsigned int k_old = k_flag & 1;
+
+                // has the inserting particle k been updated? ghost particles are not updated
+                bool k_has_been_updated = k < N && d_trial_move_type[k]
+                    && d_update_order_by_ptl[k] < update_order_i && !d_reject[k];
+
+                if ((k_old && k_has_been_updated) || (!k_old && !k_has_been_updated))
+                    continue;
+
+                bool logical_nor = true; // the empty NOR disjunction is true
+                for (unsigned int cur_term = cur_neigh; cur_term < cur_neigh + nterms; ++cur_term)
+                    {
+                    unsigned int j_flag = d_deltaF_nor_nlist[maxn_deltaF_nor*i + cur_term];
+
+                    unsigned int j = j_flag >> 1;
+                    bool old = j_flag & 1;
+
+                    if (j == i)
+                        continue;
+
+                    // has j been updated? ghost particles are not updated
+                    bool j_has_been_updated = j < N && d_trial_move_type[j]
+                        && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
+
+                    if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
+                        {
+                        logical_nor = false;
+                        break;
+                        }
+                    }
+
+                if (logical_nor)
+                    {
+                    atomicAdd(&s_deltaF[group], d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh]);
+                    }
+                } // end loop over terms
+            } // end depletants
+
         } // end if (active && move_active)
 
     __syncthreads();
@@ -280,10 +376,12 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
     if (master && active && move_active)
         {
         float delta_U = s_energy_new[group] - s_energy_old[group];
+        float deltaF = s_deltaF[group]; // deltaF = F_old - F_new
 
         // Metropolis-Hastings
         hoomd::RandomGenerator rng_i(hoomd::RNGIdentifier::HPMCMonoAccept, seed, i, select, timestep);
-        bool accept = !s_reject[group] && (!patch || (hoomd::detail::generate_canonical<double>(rng_i) < slow::exp(-delta_U)));
+        bool accept = !s_reject[group] && ((!patch && !have_auxiliary_variables)
+            || (hoomd::detail::generate_canonical<double>(rng_i) < slow::exp(-delta_U+deltaF)));
 
         if ((accept && d_reject[i]) || (!accept && !d_reject[i]))
             {
@@ -420,6 +518,18 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  const unsigned int seed,
                  const unsigned int select,
                  const unsigned int timestep,
+                 const unsigned int *d_deltaF_or_nneigh,
+                 const unsigned int *d_deltaF_or_len,
+                 const unsigned int *d_deltaF_or_nlist,
+                 const Scalar *d_deltaF_or,
+                 const unsigned maxn_deltaF_or,
+                 const unsigned int *d_deltaF_nor_nneigh,
+                 const unsigned int *d_deltaF_nor_len,
+                 const unsigned int *d_deltaF_nor_k,
+                 const unsigned int *d_deltaF_nor_nlist,
+                 const Scalar *d_deltaF_nor,
+                 const unsigned int maxn_deltaF_nor,
+                 const bool have_auxiliary_variables,
                  const unsigned int block_size,
                  const unsigned int tpp)
     {
@@ -451,7 +561,7 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
         const unsigned int num_blocks = nwork/n_groups + 1;
         dim3 grid(num_blocks, 1, 1);
 
-        unsigned int shared_bytes = n_groups * (2*sizeof(float) + sizeof(unsigned int));
+        unsigned int shared_bytes = n_groups * (3*sizeof(float) + sizeof(unsigned int));
         hipLaunchKernelGGL(kernel::hpmc_accept, grid, threads, shared_bytes, 0,
             d_update_order_by_ptl,
             d_trial_move_type,
@@ -476,7 +586,20 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
             d_condition,
             seed,
             select,
-            timestep);
+            timestep,
+            d_deltaF_or_nneigh,
+            d_deltaF_or_len,
+            d_deltaF_or_nlist,
+            d_deltaF_or,
+            maxn_deltaF_or,
+            d_deltaF_nor_nneigh,
+            d_deltaF_nor_len,
+            d_deltaF_nor_k,
+            d_deltaF_nor_nlist,
+            d_deltaF_nor,
+            maxn_deltaF_nor,
+            have_auxiliary_variables
+            );
         }
     }
 
