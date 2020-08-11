@@ -569,6 +569,10 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                 {
                 unsigned int overlap_k_flag = s_overlap_idx_list[group*max_len+k];
                 unsigned int overlap_k = overlap_k_flag >> 1;
+
+                if (overlap_k >= N_local)
+                    continue;
+
                 bool overlap_old_k = overlap_k_flag & 1;
 
                 // write necessary conditions, plus one for the sentinel
