@@ -1121,7 +1121,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                 }
 
             // make sure neighbor list size is sufficient before running the kernels
-            checkReallocate() || (have_auxiliary_variables && checkReallocateDepletants());
+            checkReallocate();
+            if (have_auxiliary_variables)
+                checkReallocateDepletants();
 
             do
                 {
@@ -1528,7 +1530,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                    reallocate_smem = false;
                    } // end while (reallocate_smem)
 
-                reallocate = checkReallocate() || (have_auxiliary_variables && checkReallocateDepletants());
+                reallocate = checkReallocate() | (have_auxiliary_variables && checkReallocateDepletants());
                 } while (reallocate);
 
             if (this->m_patch && !this->m_patch_log)

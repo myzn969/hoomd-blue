@@ -588,19 +588,18 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                     else
                         d_deltaF_nor[overlap_k*max_len_deltaF+n] = -log(1+1/(Scalar)ntrial); // denominator
                     }
-                else if (n + nterms > max_len_deltaF)
+                if (n + nterms > max_len_deltaF)
                     {
                     atomicMax_system(d_overflow, n + nterms);
                     }
 
-                unsigned int l = 0;
                 for (unsigned int m = 0; m < nterms; ++m)
                     {
                     unsigned int overlap_m_flag = s_overlap_idx_list[group*max_len+m];
-                    if (n + l < max_len_deltaF)
+                    if (n + m < max_len_deltaF)
                         {
                         // store neighbor information
-                        d_deltaF_nor_nlist[overlap_k*max_len_deltaF + n + l++] = overlap_m_flag;
+                        d_deltaF_nor_nlist[overlap_k*max_len_deltaF + n + m] = overlap_m_flag;
                         }
                     }
                 }
