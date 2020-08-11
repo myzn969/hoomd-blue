@@ -928,9 +928,10 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
         GPUPartition gpu_partition_rank = this->m_pdata->getGPUPartition();
         unsigned int nparticles_rank = this->m_pdata->getN();
 
+        int particle_comm_size = 1;
+        int particle_comm_rank = 0;
+
         #ifdef ENABLE_MPI
-        int particle_comm_size;
-        int particle_comm_rank;
         if (m_particle_comm)
             {
             // split local particle data further if a communicator is supplied

@@ -72,7 +72,6 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                                      unsigned int depletant_type_b,
                                      const Index2D depletant_idx,
                                      hpmc_implicit_counters_t *d_implicit_counters,
-                                     const unsigned int *d_update_order_by_ptl,
                                      const unsigned int ntrial,
                                      const unsigned int *d_tag,
                                      const Scalar4 *d_vel,
@@ -187,7 +186,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
     // we always have a number of blocks that is a multiple of two
     bool new_config = block & 1;
 
-    if ((!d_trial_move_type[i] || i >= N_local) && new_config)
+    if ((i >= N_local || !d_trial_move_type[i]) && new_config)
         return;
 
     // load updated particle position
@@ -772,7 +771,6 @@ void depletants_launcher_phase2(const hpmc_args_t& args,
             assert(args.d_excell_size);
             assert(args.d_check_overlaps);
             assert(implicit_args.d_implicit_count);
-            assert(args.d_update_order_by_ptl);
             assert(auxiliary_args.d_tag);
             assert(auxiliary_args.d_vel);
             assert(auxiliary_args.d_trial_vel);
@@ -808,7 +806,6 @@ void depletants_launcher_phase2(const hpmc_args_t& args,
                                  implicit_args.depletant_type_b,
                                  implicit_args.depletant_idx,
                                  implicit_args.d_implicit_count + idev*implicit_args.implicit_counters_pitch,
-                                 args.d_update_order_by_ptl,
                                  auxiliary_args.ntrial,
                                  auxiliary_args.d_tag,
                                  auxiliary_args.d_vel,
