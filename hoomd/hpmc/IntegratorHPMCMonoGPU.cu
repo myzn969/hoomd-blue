@@ -113,7 +113,7 @@ __global__ void hpmc_shift(Scalar4 *d_postype,
     }
 
 //!< Kernel to accept/reject
-__global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
+__global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_trial_move_type,
                  const unsigned int *d_reject_out_of_cell,
                  unsigned int *d_reject,
@@ -133,10 +133,6 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  const float *d_energy_old,
                  const float *d_energy_new,
                  const unsigned int maxn_patch,
-                 unsigned int *d_condition,
-                 const unsigned int seed,
-                 const unsigned int select,
-                 const unsigned int timestep,
                  const unsigned int *d_deltaF_or_nneigh,
                  const unsigned int *d_deltaF_or_len,
                  const unsigned int *d_deltaF_or_nlist,
@@ -147,6 +143,7 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_deltaF_nor_k,
                  const unsigned int *d_deltaF_nor_nlist,
                  const Scalar *d_deltaF_nor,
+                 Scalar *d_F,
                  const unsigned int maxn_deltaF_nor,
                  const bool have_auxiliary_variables
                  )
@@ -373,17 +370,54 @@ __global__ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
 
     __syncthreads();
 
-    if (master && active && move_active)
+    if (master && active)
         {
-        float delta_U = s_energy_new[group] - s_energy_old[group];
-        float deltaF = s_deltaF[group]; // deltaF = F_old - F_new
+        d_reject_out[i] = s_reject[group];
+        if (move_active)
+            {
+            // write out final free energy
+            d_F[i] = s_energy_old[group] - s_energy_new[group] + s_deltaF[group];
+            }
+        }
+    }
+
+//!< Kernel to evaluate convergence
+__global__ void hpmc_accept(
+                 const unsigned int *d_trial_move_type,
+                 unsigned int *d_reject_in,
+                 unsigned int *d_reject_out,
+                 const Scalar *d_F,
+                 unsigned int *d_condition,
+                 const unsigned int seed,
+                 const unsigned int select,
+                 const unsigned int timestep,
+                 const bool patch,
+                 const bool have_auxiliary_variables,
+                 const unsigned int nwork,
+                 const unsigned work_offset)
+    {
+    // the particle we are handling
+    unsigned int work_idx = blockIdx.x*blockDim.x + threadIdx.x;
+    if (work_idx >= nwork)
+        return;
+    unsigned int i = work_idx + work_offset;
+
+    // is this particle considered?
+    bool move_active = d_trial_move_type[i] > 0;
+
+    // combine with reject flag from gen_moves for particles which are always rejected
+    bool reject = d_reject_out[i];
+
+    if (move_active)
+        {
+        float deltaF = d_F[i]; // deltaF = F_old - F_new
 
         // Metropolis-Hastings
         hoomd::RandomGenerator rng_i(hoomd::RNGIdentifier::HPMCMonoAccept, seed, i, select, timestep);
-        bool accept = !s_reject[group] && ((!patch && !have_auxiliary_variables)
-            || (hoomd::detail::generate_canonical<double>(rng_i) < slow::exp(-delta_U+deltaF)));
+        bool accept = !reject && ((!patch && !have_auxiliary_variables)
+            || (hoomd::detail::generate_canonical<double>(rng_i) < slow::exp(deltaF)));
 
-        if ((accept && d_reject[i]) || (!accept && !d_reject[i]))
+        if ((accept && d_reject_in[i]) || (!accept && !d_reject_in[i]))
             {
             // flag that we're not done yet (a trivial race condition upon write)
             *d_condition = 1;
@@ -495,7 +529,7 @@ void hpmc_shift(Scalar4 *d_postype,
     }
 
 
-void hpmc_accept(const unsigned int *d_update_order_by_ptl,
+void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_trial_move_type,
                  const unsigned int *d_reject_out_of_cell,
                  unsigned int *d_reject,
@@ -514,10 +548,6 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  const float *d_energy_old,
                  const float *d_energy_new,
                  const unsigned int maxn_patch,
-                 unsigned int *d_condition,
-                 const unsigned int seed,
-                 const unsigned int select,
-                 const unsigned int timestep,
                  const unsigned int *d_deltaF_or_nneigh,
                  const unsigned int *d_deltaF_or_len,
                  const unsigned int *d_deltaF_or_nlist,
@@ -528,6 +558,7 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_deltaF_nor_k,
                  const unsigned int *d_deltaF_nor_nlist,
                  const Scalar *d_deltaF_nor,
+                 Scalar *d_F,
                  const unsigned int maxn_deltaF_nor,
                  const bool have_auxiliary_variables,
                  const unsigned int block_size,
@@ -538,7 +569,7 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
     if (max_block_size == -1)
         {
         hipFuncAttributes attr;
-        hipFuncGetAttributes(&attr, reinterpret_cast<const void*>(kernel::hpmc_accept));
+        hipFuncGetAttributes(&attr, reinterpret_cast<const void*>(kernel::hpmc_sum_energies));
         max_block_size = attr.maxThreadsPerBlock;
         }
 
@@ -562,7 +593,7 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
         dim3 grid(num_blocks, 1, 1);
 
         unsigned int shared_bytes = n_groups * (3*sizeof(float) + sizeof(unsigned int));
-        hipLaunchKernelGGL(kernel::hpmc_accept, grid, threads, shared_bytes, 0,
+        hipLaunchKernelGGL(kernel::hpmc_sum_energies, grid, threads, shared_bytes, 0,
             d_update_order_by_ptl,
             d_trial_move_type,
             d_reject_out_of_cell,
@@ -583,10 +614,6 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
             d_energy_old,
             d_energy_new,
             maxn_patch,
-            d_condition,
-            seed,
-            select,
-            timestep,
             d_deltaF_or_nneigh,
             d_deltaF_or_len,
             d_deltaF_or_nlist,
@@ -597,6 +624,7 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
             d_deltaF_nor_k,
             d_deltaF_nor_nlist,
             d_deltaF_nor,
+            d_F,
             maxn_deltaF_nor,
             have_auxiliary_variables
             );
@@ -604,6 +632,57 @@ void hpmc_accept(const unsigned int *d_update_order_by_ptl,
 
     }
 
+//!< Kernel to evaluate convergence
+void hpmc_accept(const unsigned int *d_trial_move_type,
+     unsigned int *d_reject_in,
+     unsigned int *d_reject_out,
+     const Scalar *d_F,
+     unsigned int *d_condition,
+     const unsigned int seed,
+     const unsigned int select,
+     const unsigned int timestep,
+     const bool patch,
+     const bool have_auxiliary_variables,
+     const GPUPartition& gpu_partition,
+     const unsigned int block_size)
+    {
+    // determine the maximum block size and clamp the input block size down
+    static int max_block_size = -1;
+    if (max_block_size == -1)
+        {
+        hipFuncAttributes attr;
+        hipFuncGetAttributes(&attr, reinterpret_cast<const void*>(kernel::hpmc_accept));
+        max_block_size = attr.maxThreadsPerBlock;
+        }
+
+    // setup the grid to run the kernel
+    unsigned int run_block_size = min(block_size, (unsigned int)max_block_size);
+
+    dim3 threads(run_block_size, 1, 1);
+
+    for (int idev = gpu_partition.getNumActiveGPUs() - 1; idev >= 0; --idev)
+        {
+        auto range = gpu_partition.getRangeAndSetGPU(idev);
+
+        unsigned int nwork = range.second - range.first;
+        const unsigned int num_blocks = nwork/run_block_size + 1;
+        dim3 grid(num_blocks, 1, 1);
+
+        hipLaunchKernelGGL(kernel::hpmc_accept, grid, threads, 0, 0,
+            d_trial_move_type,
+            d_reject_in,
+            d_reject_out,
+            d_F,
+            d_condition,
+            seed,
+            select,
+            timestep,
+            patch,
+            have_auxiliary_variables,
+            nwork,
+            range.first);
+        }
+    }
 } // end namespace gpu
 } // end namespace hpmc
 

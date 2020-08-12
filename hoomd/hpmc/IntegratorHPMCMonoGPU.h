@@ -179,6 +179,9 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
             m_tuner_excell_block_size->setPeriod(period);
             m_tuner_excell_block_size->setEnabled(enable);
 
+            m_tuner_energies->setPeriod(period*this->m_nselect);
+            m_tuner_energies->setEnabled(enable);
+
             m_tuner_accept->setPeriod(period*this->m_nselect);
             m_tuner_accept->setEnabled(enable);
 
@@ -209,6 +212,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
                 }
             l.push_back(m_tuner_depletants);
             l.push_back(m_tuner_excell_block_size);
+            l.push_back(m_tuner_energies);
             l.push_back(m_tuner_accept);
             l.push_back(m_tuner_num_depletants);
             l.push_back(m_tuner_num_depletants_ntrial);
@@ -252,6 +256,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         std::shared_ptr<Autotuner> m_tuner_narrow;           //!< Autotuner for the narrow phase
         std::shared_ptr<Autotuner> m_tuner_update_pdata;    //!< Autotuner for the update step group and block sizes
         std::shared_ptr<Autotuner> m_tuner_excell_block_size;  //!< Autotuner for excell block_size
+        std::shared_ptr<Autotuner> m_tuner_energies;         //!< Autotuner for summing energies
         std::shared_ptr<Autotuner> m_tuner_accept;           //!< Autotuner for MC acceptance
         std::shared_ptr<Autotuner> m_tuner_depletants;       //!< Autotuner for inserting depletants
         std::shared_ptr<Autotuner> m_tuner_num_depletants;   //!< Autotuner for calculating number of depletants
@@ -285,6 +290,8 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<Scalar> m_deltaF_nor;                     //!< Free energy contributions for logical nor
         unsigned int m_deltaF_nor_maxlen;                     //!< Maximum number of neighbors for logical nor
         GlobalArray<unsigned int> m_overflow_nor;             //!< Overflow condition for logical NOR
+
+        GlobalArray<Scalar> m_F;                              //!< accumulated free energy
 
         GlobalArray<unsigned int> m_nlist;                       //!< List of overlapping particles
         GlobalArray<unsigned int> m_nneigh;                     //!< Number of neighbors
@@ -368,6 +375,7 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
     m_tuner_excell_block_size = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_excell_block_size", this->m_exec_conf));
     m_tuner_num_depletants = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_num_depletants", this->m_exec_conf));
     m_tuner_num_depletants_ntrial = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_num_depletants_ntrial", this->m_exec_conf));
+    m_tuner_accept = std::shared_ptr<Autotuner>(new Autotuner(dev_prop.warpSize, dev_prop.maxThreadsPerBlock, dev_prop.warpSize, 5, 1000000, "hpmc_accept", this->m_exec_conf));
 
     // tuning parameters for narrow phase
     std::vector< std::vector< unsigned int> > valid_params(this->m_pdata->getNTypes()+1);
@@ -398,16 +406,16 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
     m_tuner_narrow = std::shared_ptr<Autotuner>(new Autotuner(valid_params, 5, 100000, "hpmc_narrow", this->m_exec_conf));
 
     // tuning parameters for acceptance kernel
-    std::vector<unsigned int> valid_params_accept;
+    std::vector<unsigned int> valid_params_energies;
     for (unsigned int block_size = dev_prop.warpSize; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += dev_prop.warpSize)
         {
         for (unsigned int group_size=1; group_size <= narrow_phase_max_tpp; group_size*=2)
             {
             if ((block_size % group_size) == 0)
-                valid_params_accept.push_back(block_size*10000 + group_size);
+                valid_params_energies.push_back(block_size*10000 + group_size);
             }
         }
-    m_tuner_accept = std::shared_ptr<Autotuner>(new Autotuner(valid_params_accept, 5, 100000, "hpmc_accept", this->m_exec_conf));
+    m_tuner_energies = std::shared_ptr<Autotuner>(new Autotuner(valid_params_energies, 5, 100000, "hpmc_energies", this->m_exec_conf));
 
     // tuning parameters for depletants
     std::vector<std::vector<unsigned int> > valid_params_depletants(2+this->m_pdata->getNTypes());
@@ -502,6 +510,9 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
         ArrayHandle<unsigned int> h_overflow_nor(m_overflow_nor, access_location::host, access_mode::overwrite);
         *h_overflow_nor.data = 0;
         }
+
+    GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_F);
+    TAG_ALLOCATION(m_F);
 
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_nlist);
     TAG_ALLOCATION(m_nlist);
@@ -922,6 +933,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
             m_deltaF_or_nneigh.resize(this->m_pdata->getMaxN());
             m_deltaF_nor_nneigh.resize(this->m_pdata->getMaxN());
+
+            m_F.resize(this->m_pdata->getMaxN());
             update_gpu_advice = true;
             }
 
@@ -1659,7 +1672,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_reject_out(m_reject_out, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_nneigh(m_nneigh, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_nlist(m_nlist, access_location::device, access_mode::read);
-                    ArrayHandle<unsigned int> d_condition(m_condition, access_location::device, access_mode::overwrite);
 
                     // patch energy
                     ArrayHandle<unsigned int> d_nlist_patch_old(m_nlist_patch_old, access_location::device, access_mode::read);
@@ -1682,17 +1694,14 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_deltaF_nor_k(m_deltaF_nor_k, access_location::device, access_mode::read);
                     ArrayHandle<Scalar> d_deltaF_nor(m_deltaF_nor, access_location::device, access_mode::read);
 
-                    // reset condition flag
-                    hipMemsetAsync(d_condition.data, 0, sizeof(unsigned int));
-                    if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
-                        CHECK_CUDA_ERROR();
+                    ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::overwrite);
 
                     this->m_exec_conf->beginMultiGPU();
-                    m_tuner_accept->begin();
-                    unsigned int param = m_tuner_accept->getParam();
+                    m_tuner_energies->begin();
+                    unsigned int param = m_tuner_energies->getParam();
                     unsigned int block_size = param/10000;
                     unsigned int tpp = param%10000;
-                    gpu::hpmc_accept(d_update_order_by_ptl.data,
+                    gpu::hpmc_sum_energies(d_update_order_by_ptl.data,
                         d_trial_move_type.data,
                         d_reject_out_of_cell.data,
                         d_reject.data,
@@ -1711,10 +1720,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         d_energy_old.data,
                         d_energy_new.data,
                         m_maxn_patch,
-                        d_condition.data,
-                        this->m_seed,
-                        this->m_exec_conf->getRank()*this->m_nselect + i,
-                        timestep,
                         d_deltaF_or_nneigh.data,
                         d_deltaF_or_len.data,
                         d_deltaF_or_nlist.data,
@@ -1725,11 +1730,99 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         d_deltaF_nor_k.data,
                         d_deltaF_nor_nlist.data,
                         d_deltaF_nor.data,
+                        d_F.data,
                         m_deltaF_nor_maxlen,
                         have_auxiliary_variables,
                         block_size,
                         tpp);
 
+                    if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
+                        CHECK_CUDA_ERROR();
+                    m_tuner_energies->end();
+                    this->m_exec_conf->endMultiGPU();
+                    }
+
+                if (this->m_prof) this->m_prof->push(this->m_exec_conf, "MPI");
+
+                    // reduce contributions from other ranks
+                    #ifdef ENABLE_MPI
+                    if (m_ntrial_comm)
+                        {
+                        // reduce free energy across rows (depletants)
+                        #ifdef ENABLE_MPI_CUDA
+                        ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::readwrite);
+                        MPI_Allreduce(MPI_IN_PLACE,
+                            d_F.data,
+                            this->m_pdata->getN(),
+                            MPI_HOOMD_SCALAR,
+                            MPI_SUM,
+                            (*m_ntrial_comm)());
+                        #else
+                        ArrayHandle<Scalar> h_F(m_F, access_location::host, access_mode::readwrite);
+                        MPI_Allreduce(MPI_IN_PLACE,
+                            h_F.data,
+                            this->m_pdata->getN(),
+                            MPI_HOOMD_SCALAR,
+                            MPI_SUM,
+                            (*m_ntrial_comm)());
+                        #endif
+                        }
+                    #endif
+
+                    #ifdef ENABLE_MPI
+                    if (m_particle_comm)
+                        {
+                        // reduce free energy across columns (particles)
+                        #ifdef ENABLE_MPI_CUDA
+                        ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::readwrite);
+                        MPI_Allreduce(MPI_IN_PLACE,
+                            d_F.data,
+                            this->m_pdata->getN(),
+                            MPI_HOOMD_SCALAR,
+                            MPI_SUM,
+                            (*m_particle_comm)());
+                        #else
+                        ArrayHandle<Scalar> h_F(m_F, access_location::host, access_mode::readwrite);
+                        MPI_Allreduce(MPI_IN_PLACE,
+                            h_F.data,
+                            this->m_pdata->getN(),
+                            MPI_HOOMD_SCALAR,
+                            MPI_SUM,
+                            (*m_particle_comm)());
+                        #endif
+                        }
+                    #endif
+
+                if (this->m_prof) this->m_prof->pop(this->m_exec_conf);
+
+                    {
+                    ArrayHandle<unsigned int> d_condition(m_condition, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_reject(m_reject, access_location::device, access_mode::readwrite);
+                    ArrayHandle<unsigned int> d_reject_out(m_reject_out, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_trial_move_type(m_trial_move_type, access_location::device, access_mode::read);
+
+                    ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::read);
+
+                    // reset condition flag
+                    hipMemsetAsync(d_condition.data, 0, sizeof(unsigned int));
+                    if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
+                        CHECK_CUDA_ERROR();
+
+                    this->m_exec_conf->beginMultiGPU();
+                    m_tuner_accept->begin();
+                    unsigned int block_size = m_tuner_accept->getParam();
+                    gpu::hpmc_accept(d_trial_move_type.data,
+                        d_reject.data,
+                        d_reject_out.data,
+                        d_F.data,
+                        d_condition.data,
+                        this->m_seed,
+                        this->m_exec_conf->getRank()*this->m_nselect + i,
+                        timestep,
+                        (this->m_patch != 0) && !this->m_patch_log,
+                        have_auxiliary_variables,
+                        this->m_pdata->getGPUPartition(),
+                        block_size);
                     if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                         CHECK_CUDA_ERROR();
                     m_tuner_accept->end();
