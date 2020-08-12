@@ -841,6 +841,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
     // rng for shuffle and grid shift
     hoomd::RandomGenerator rng(hoomd::RNGIdentifier::HPMCMonoShift, this->m_seed, timestep);
 
+    // start the profile
+    if (this->m_prof) this->m_prof->push(this->m_exec_conf, "HPMC");
+
     if (this->m_pdata->getN() > 0)
         {
         // compute the width of the active region
@@ -862,9 +865,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
         // update the cell list
         this->m_cl->compute(timestep);
-
-        // start the profile
-        if (this->m_prof) this->m_prof->push(this->m_exec_conf, "HPMC");
 
         // if the cell list is a different size than last time, reinitialize the expanded cell list
         uint3 cur_dim = this->m_cl->getDim();
@@ -1703,12 +1703,12 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     this->m_exec_conf->endMultiGPU();
                     }
 
-                if (this->m_prof) this->m_prof->push(this->m_exec_conf, "MPI");
-
                     // reduce contributions from other ranks
                     #ifdef ENABLE_MPI
                     if (m_ntrial_comm)
                         {
+                        if (this->m_prof) this->m_prof->push(this->m_exec_conf, "MPI");
+
                         // reduce free energy across rows (depletants)
                         #ifdef ENABLE_MPI_CUDA
                         ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::readwrite);
@@ -1727,12 +1727,16 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             MPI_SUM,
                             (*m_ntrial_comm)());
                         #endif
+
+                        if (this->m_prof) this->m_prof->pop(this->m_exec_conf);
                         }
                     #endif
 
                     #ifdef ENABLE_MPI
                     if (m_particle_comm)
                         {
+                        if (this->m_prof) this->m_prof->push(this->m_exec_conf, "MPI");
+
                         // reduce free energy across columns (particles)
                         #ifdef ENABLE_MPI_CUDA
                         ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::readwrite);
@@ -1751,10 +1755,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             MPI_SUM,
                             (*m_particle_comm)());
                         #endif
+                        if (this->m_prof) this->m_prof->pop(this->m_exec_conf);
                         }
                     #endif
-
-                if (this->m_prof) this->m_prof->pop(this->m_exec_conf);
 
                     {
                     ArrayHandle<unsigned int> d_condition(m_condition, access_location::device, access_mode::overwrite);
