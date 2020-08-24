@@ -241,7 +241,9 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
             }
         #endif
 
+        #ifdef ENABLE_MPI
         virtual std::vector<hpmc_implicit_counters_t> getImplicitCounters(unsigned int mode=0);
+        #endif
 
     protected:
         std::shared_ptr<CellList> m_cl;                      //!< Cell list
