@@ -575,7 +575,11 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
 
         if (active && master && s_len_group[group] && s_len_group[group] <= max_len)
             {
+            #if (__CUDA_ARCH >= 600)
             unsigned int n = atomicAdd_system(&d_deltaF_or_nneigh[i], s_len_group[group]);
+            #else
+            unsigned int n = atomicAdd(&d_deltaF_or_nneigh[i], s_len_group[group]);
+            #endif
             if (n < max_len_deltaF)
                 {
                 d_deltaF_or_len[i*max_len_deltaF+n] = s_len_group[group];
@@ -596,7 +600,11 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
         // shared mem overflowed?
         if (active && master && s_len_group[group] > max_len)
             {
+            #if (__CUDA_ARCH__ >= 600)
             atomicMax_system(d_req_len, s_len_group[group]);
+            #else
+            atomicMax(d_req_len, s_len_group[group]);
+            #endif
             }
 
         // do we still need to process depletants?

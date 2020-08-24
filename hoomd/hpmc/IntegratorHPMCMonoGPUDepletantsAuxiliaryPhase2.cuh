@@ -576,7 +576,11 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
 
                 // write necessary conditions, plus one for the sentinel
                 unsigned int nterms = s_len_group[group];
+                #if (__CUDA_ARCH__ >= 600)
                 unsigned int n = atomicAdd_system(&d_deltaF_nor_nneigh[overlap_k], nterms);
+                #else
+                unsigned int n = atomicAdd(&d_deltaF_nor_nneigh[overlap_k], nterms);
+                #endif
 
                 if (n < max_len_deltaF)
                     {
@@ -591,7 +595,11 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                     }
                 if (n + nterms > max_len_deltaF)
                     {
+                    #if (__CUDA_ARCH__ >= 600)
                     atomicMax_system(d_overflow, n + nterms);
+                    #else
+                    atomicMax(d_overflow, n + nterms);
+                    #endif
                     }
 
                 for (unsigned int m = 0; m < nterms; ++m)
@@ -609,7 +617,11 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
         // shared mem overflowed?
         if (active && master && s_len_group[group] > max_len)
             {
+            #if (__CUDA_ARCH__ >= 600)
             atomicMax_system(d_req_len, s_len_group[group]);
+            #else
+            atomicMax(d_req_len, s_len_group[group]);
+            #endif
             }
 
         // do we still need to process depletants?
