@@ -223,7 +223,7 @@ endif(SINGLE_PRECISION)
 # Libraries and compile definitions for CUDA enabled builds
 if (ENABLE_HIP)
     if (HIP_PLATFORM STREQUAL "hcc" OR HIP_PLATFORM STREQUAL "hip-clang")
-        target_link_libraries(_hoomd PUBLIC HIP::hiprt HIP::hipfft HIP::hiprt)
+        target_link_libraries(_hoomd PUBLIC HIP::hipfft HIP::hiprt)
     elseif(HIP_PLATFORM STREQUAL "nvcc")
         target_link_libraries(_hoomd PUBLIC CUDA::cudart CUDA::cufft)
     endif()
@@ -355,19 +355,6 @@ if (BUILD_MD)
         # add the distributed FFT library
         add_subdirectory(${HOOMD_SOURCE_DIR}/hoomd/extern/dfftlib)
     endif()
-
-    if (ENABLE_HIP)
-        # add the neighbor library
-        set(NEIGHBOR_HOOMD_INTERNAL TRUE)
-
-        if (HIP_PLATFORM STREQUAL "hcc" OR HIP_PLATFORM STREQUAL "hip-clang")
-            set(NEIGHBOR_DISABLE_MIXED TRUE)
-            target_compile_definitions(_hoomd PUBLIC NEIGHBOR_DISABLE_MIXED)
-        endif()
-
-        add_subdirectory(${HOOMD_SOURCE_DIR}/hoomd/extern/neighbor)
-    endif (ENABLE_HIP)
-
     add_subdirectory(md)
 endif()
 
