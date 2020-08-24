@@ -841,7 +841,7 @@ void depletants_launcher_phase2(const hpmc_args_t& args,
                                  args.d_type_params);
             }
         }
-    else
+    else if (cur_launch_bounds)
         {
         depletants_launcher_phase2<Shape, pairwise>(args,
             implicit_args,
@@ -883,7 +883,7 @@ void hpmc_depletants_auxiliary_phase2(const hpmc_args_t& args,
             auxiliary_args,
             params,
             launch_bounds,
-            detail::int2type<MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
+            detail::int2type<(int)MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
         }
     else
         {
@@ -892,7 +892,7 @@ void hpmc_depletants_auxiliary_phase2(const hpmc_args_t& args,
             auxiliary_args,
             params,
             launch_bounds,
-            detail::int2type<MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
+            detail::int2type<(int)MAX_BLOCK_SIZE/MIN_BLOCK_SIZE>());
         }
     }
 #endif

@@ -620,7 +620,7 @@ void cluster_overlaps_launcher(const cluster_args_t& args, const typename Shape:
                 nwork, args.d_type_params);
             }
         }
-    else
+    else if (cur_launch_bounds)
         {
         cluster_overlaps_launcher<Shape>(args, params, max_threads, detail::int2type<cur_launch_bounds/2>());
         }
