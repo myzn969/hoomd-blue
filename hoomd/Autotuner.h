@@ -145,6 +145,15 @@ class PYBIND11_EXPORT Autotuner
             return d_params;
             }
 
+        //! Check if tuner is enabled
+        /*!
+         * \returns True if enabled.
+         */
+        bool getEnabled() const
+            {
+            return m_enabled;
+            }
+
         //! Enable/disable sampling
         /*! \param enabled true to enable sampling, false to disable it
         */
@@ -159,6 +168,12 @@ class PYBIND11_EXPORT Autotuner
                 return true;
             else
                 return false;
+            }
+
+        //! Get the sampling period
+        unsigned int getPeriod() const
+            {
+            return m_period;
             }
 
         //! Change the sampling period
