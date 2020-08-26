@@ -686,7 +686,7 @@ public:
         access_type& param = m_access(params[m_typeid]);
         pybind11::list overlap;
         for(size_t i = 0; i < param.n_faces; i++)
-            overlap.append(pybind11::cast<unsigned int>(param.face_overlap[i]));
+            overlap.append(param.face_overlap[i]);
         return overlap;
         }
 
@@ -918,7 +918,7 @@ public:
         access_type& param = m_access(params[m_typeid]);
         pybind11::list overlap;
         for(size_t i = 0; i < param.N; i++)
-            overlap.append(pybind11::cast<unsigned int>(param.moverlap[i]));
+            overlap.append(param.moverlap[i]);
         return overlap;
         }
 
