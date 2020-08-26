@@ -271,7 +271,7 @@ class PYBIND11_EXPORT Autotuner
          * This method can be called (from the controlling thread) regardless of whether the
          * kernel is running and sets the parameter value for subsequent launches
          */
-        void setOptimalParameter(const std::vector<unsigned int>& opt);
+        void setOptimalParameter(const pybind11::list opt);
 
         //! Measure the execution time of the next kernel launch
         /* \param param the launch parameter to be tested
@@ -280,7 +280,7 @@ class PYBIND11_EXPORT Autotuner
          * This method is intended be called from a separate host thread and
          * only returns when the kernel launch has completed.
          */
-        float measure(const std::vector<unsigned int>& param);
+        float measure(const pybind11::list param);
 
     protected:
         std::vector<unsigned int> computeOptimalParameter();

@@ -605,14 +605,18 @@ bool Autotuner::sanityCheck(const std::vector<unsigned int>& param)
  * This method is intended be called from a separate host thread and
  * only returns when the kernel launch has completed.
  */
-float Autotuner::measure(const std::vector<unsigned int>& param)
+float Autotuner::measure(const pybind11::list param)
     {
     if (!m_attached)
         {
         throw std::runtime_error("The Autotuner is not attached. Cannot measure kernel run time.\n");
         }
 
-    if (!sanityCheck(param))
+    std::vector<unsigned int> p;
+    for (unsigned int i = 0; i < pybind11::len(param); ++i)
+        p.push_back(pybind11::cast<unsigned int>(param[i]));
+
+    if (!sanityCheck(p))
         {
         m_exec_conf->msg->warning() << "Returning timing of 0. Tuning may not be sucessful." << std::endl;
         return 0.0;
@@ -622,7 +626,7 @@ float Autotuner::measure(const std::vector<unsigned int>& param)
         std::lock_guard<std::mutex> lk(m_mutex);
 
         // set the new parameter
-        m_current_param = param;
+        m_current_param = p;
         m_have_param = true;
         }
 
@@ -642,14 +646,18 @@ float Autotuner::measure(const std::vector<unsigned int>& param)
     return m;
     }
 
-void Autotuner::setOptimalParameter(const std::vector<unsigned int>& opt)
+void Autotuner::setOptimalParameter(const pybind11::list opt)
     {
     if (! m_attached)
         {
         throw std::runtime_error("The Autotuner is not attached. Cannot set optimal parameter value.\n");
         }
 
-    if (!sanityCheck(opt))
+    std::vector<unsigned int> p;
+    for (unsigned int i = 0; i < pybind11::len(opt); ++i)
+        p.push_back(pybind11::cast<unsigned int>(opt[i]));
+
+    if (!sanityCheck(p))
         {
         m_exec_conf->msg->warning() << "Ignoring optimal parameter." << std::endl;
         return;
@@ -659,7 +667,7 @@ void Autotuner::setOptimalParameter(const std::vector<unsigned int>& opt)
         std::lock_guard<std::mutex> lk(m_mutex);
 
         // set the new parameter
-        m_current_param = opt;
+        m_current_param = p;
         m_have_param = true;
 
         // prevent automatic retuning
