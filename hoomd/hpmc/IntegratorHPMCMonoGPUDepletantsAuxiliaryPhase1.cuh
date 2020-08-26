@@ -781,7 +781,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
             assert(auxiliary_args.d_vel);
             assert(auxiliary_args.d_trial_vel);
             assert(auxiliary_args.d_n_depletants_ntrial);
-            assert(auxiliary_args.d_type_params);
+            assert(args.d_type_params);
 
             hipLaunchKernelGGL((kernel::hpmc_insert_depletants_phase1<Shape, launch_bounds_nonzero*MIN_BLOCK_SIZE, pairwise>),
                 dim3(grid), dim3(threads), shared_bytes, auxiliary_args.streams_phase1[idev],
