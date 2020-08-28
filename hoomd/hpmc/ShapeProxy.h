@@ -64,9 +64,9 @@ template<class ScalarType>
 pybind11::list vec3_to_python(const vec3<ScalarType>& vec)
     {
     pybind11::list v;
-    v.append(pybind11::cast<Scalar>(vec.x));
-    v.append(pybind11::cast<Scalar>(vec.y));
-    v.append(pybind11::cast<Scalar>(vec.z));
+    v.append(vec.x);
+    v.append(vec.y);
+    v.append(vec.z);
     return v;
     }
 
@@ -74,10 +74,10 @@ template<class ScalarType>
 pybind11::list quat_to_python(const quat<ScalarType>& qu)
     {
     pybind11::list v;
-    v.append(pybind11::cast<Scalar>(qu.s));
-    v.append(pybind11::cast<Scalar>(qu.v.x));
-    v.append(pybind11::cast<Scalar>(qu.v.y));
-    v.append(pybind11::cast<Scalar>(qu.v.z));
+    v.append(qu.s);
+    v.append(qu.v.x);
+    v.append(qu.v.y);
+    v.append(qu.v.z);
     return v;
     }
 
@@ -440,8 +440,8 @@ typename ShapeUnion<Shape>::param_type make_union_params(pybind11::list _members
         OverlapReal z = pybind11::cast<OverlapReal>(orientations_i[3]);
         quat<OverlapReal> orientation(s, vec3<OverlapReal>(x,y,z));
         result.mparams[i] = param;
-        result.mpos[i] = pos;
-        result.morientation[i] = orientation;
+        result.mpos[i] = make_scalar3(pos.x,pos.y,pos.z);
+        result.morientation[i] = make_scalar4(orientation.s,orientation.v.x,orientation.v.y,orientation.v.z);
         result.moverlap[i] = pybind11::cast<unsigned int>(overlap[i]);
 
         Shape dummy(orientation, param);
@@ -884,7 +884,11 @@ public:
         std::vector<param_type, managed_allocator<param_type> > & params = m_mc->getParams();
         access_type& param = m_access(params[m_typeid]);
         pybind11::list pos;
-        for(size_t i = 0; i < param.N; i++) pos.append(vec3_to_python(param.mpos[i]));
+        for(size_t i = 0; i < param.N; i++)
+            {
+            auto p = param.mpos[i];
+            pos.append(vec3_to_python(vec3<Scalar>(p.x,p.y,p.z)));
+            }
         return pos;
         }
 
@@ -894,7 +898,10 @@ public:
         access_type& param = m_access(params[m_typeid]);
         pybind11::list orient;
         for(size_t i = 0; i < param.N; i++)
-            orient.append(quat_to_python(param.morientation[i]));
+            {
+            Scalar4 q = param.morientation[i];
+            orient.append(quat_to_python(quat<Scalar>(q.w,vec3<Scalar>(q.x,q.y,q.z))));
+            }
         return orient;
         }
 

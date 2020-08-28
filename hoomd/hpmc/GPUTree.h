@@ -53,9 +53,9 @@ class GPUTree
             // allocate
             m_num_nodes = tree.getNumNodes();
 
-            m_center = ManagedArray<vec3<OverlapReal> >(m_num_nodes, managed);
-            m_lengths = ManagedArray<vec3<OverlapReal> >(m_num_nodes,managed);
-            m_rotation = ManagedArray<quat<OverlapReal> >(m_num_nodes,managed);
+            m_center = ManagedArray<OverlapReal3>(m_num_nodes, managed);
+            m_lengths = ManagedArray<OverlapReal3>(m_num_nodes,managed);
+            m_rotation = ManagedArray<OverlapReal4>(m_num_nodes,managed);
             m_mask = ManagedArray<unsigned int>(m_num_nodes,managed);
             m_is_sphere = ManagedArray<unsigned int>(m_num_nodes,managed);
             m_left = ManagedArray<unsigned int>(m_num_nodes, managed);
@@ -72,9 +72,12 @@ class GPUTree
                 m_left[i] = tree.getNodeLeft(i);
                 m_escape[i] = tree.getEscapeIndex(i);
 
-                m_center[i] = tree.getNodeOBB(i).getPosition();
-                m_rotation[i] = tree.getNodeOBB(i).rotation;
-                m_lengths[i] = tree.getNodeOBB(i).lengths;
+                vec3<OverlapReal> p = tree.getNodeOBB(i).getPosition();
+                m_center[i] = make_overlapreal3(p.x,p.y,p.z);
+                quat<OverlapReal> q = tree.getNodeOBB(i).rotation;
+                m_rotation[i] = make_overlapreal4(q.s,q.v.x,q.v.y,q.v.z);
+                vec3<OverlapReal> l = tree.getNodeOBB(i).lengths;
+                m_lengths[i] = make_overlapreal3(l.x,l.y,l.z);
                 m_mask[i] = tree.getNodeOBB(i).mask;
                 m_is_sphere[i] = tree.getNodeOBB(i).isSphere();
 
@@ -268,9 +271,12 @@ class GPUTree
         DEVICE inline OBB getOBB(unsigned int idx) const
             {
             OBB obb;
-            obb.center = m_center[idx];
-            obb.lengths = m_lengths[idx];
-            obb.rotation = m_rotation[idx];
+            auto p = m_center[idx];
+            obb.center = vec3<OverlapReal>(p.x,p.y,p.z);
+            auto l = m_lengths[idx];
+            obb.lengths = vec3<OverlapReal>(l.x,l.y,l.z);
+            auto q = m_rotation[idx];
+            obb.rotation = quat<OverlapReal>(q.w, vec3<OverlapReal>(q.x,q.y,q.z));
             obb.mask = m_mask[idx];
             obb.is_sphere = m_is_sphere[idx];
             return obb;
@@ -344,9 +350,9 @@ class GPUTree
             }
 
     private:
-        ManagedArray<vec3<OverlapReal> > m_center;
-        ManagedArray<vec3<OverlapReal> > m_lengths;
-        ManagedArray<quat<OverlapReal> > m_rotation;
+        ManagedArray<OverlapReal3> m_center;
+        ManagedArray<OverlapReal3> m_lengths;
+        ManagedArray<OverlapReal4> m_rotation;
         ManagedArray<unsigned int> m_mask;
         ManagedArray<unsigned int> m_is_sphere;
 

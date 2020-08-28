@@ -36,7 +36,8 @@ void build_tree(typename ShapeUnion<Shape>::param_type& data)
     for (unsigned int i = 0; i < data.N; ++i)
         {
         Shape dummy(quat<Scalar>(data.morientation[i]), data.mparams[i]);
-        obbs[i] = OBB(dummy.getAABB(data.mpos[i]));
+        auto p = data.mpos[i];
+        obbs[i] = OBB(dummy.getAABB(vec3<Scalar>(p.x,p.y,p.z)));
         }
 
     tree.buildTree(obbs, data.N, 4, true);
@@ -65,10 +66,10 @@ UP_TEST( construction )
 
     ShapeUnion<ShapeSphere>::param_type params(2,false);
     params.diameter = 2*R;
-    params.mpos[0] = vec3<Scalar>(x_i, 0, 0);
-    params.mpos[1] = vec3<Scalar>(x_j, 0, 0);
-    params.morientation[0] = o;
-    params.morientation[1] = o;
+    params.mpos[0] = make_scalar3(x_i, 0, 0);
+    params.mpos[1] = make_scalar3(x_j, 0, 0);
+    params.morientation[0] = quat_to_scalar4(o);
+    params.morientation[1] = quat_to_scalar4(o);
     params.mparams[0] = par_i;
     params.mparams[1] = par_j;
     params.moverlap[0] = 1;
@@ -83,10 +84,10 @@ UP_TEST( construction )
     MY_CHECK_CLOSE(a.orientation.v.z, o.v.z, tol);
     MY_CHECK_CLOSE(a.members.diameter, R*2, tol);
 
-    MY_CHECK_CLOSE(a.members.morientation[0].s, o.s, tol);
-    MY_CHECK_CLOSE(a.members.morientation[0].v.x, o.v.x, tol);
-    MY_CHECK_CLOSE(a.members.morientation[1].v.y, o.v.y, tol);
-    MY_CHECK_CLOSE(a.members.morientation[1].v.z, o.v.z, tol);
+    MY_CHECK_CLOSE(a.members.morientation[0].w, o.s, tol);
+    MY_CHECK_CLOSE(a.members.morientation[0].x, o.v.x, tol);
+    MY_CHECK_CLOSE(a.members.morientation[1].y, o.v.y, tol);
+    MY_CHECK_CLOSE(a.members.morientation[1].z, o.v.z, tol);
     MY_CHECK_CLOSE(a.members.mpos[0].x, x_i, tol);
     MY_CHECK_CLOSE(a.members.mpos[1].x, x_j, tol);
 
@@ -119,10 +120,10 @@ UP_TEST( non_overlap )
 
     ShapeUnion<ShapeSphere>::param_type params(2,false);
     params.diameter = 2*R;
-    params.mpos[0] = vec3<Scalar>(x_i, 0, 0);
-    params.mpos[1] = vec3<Scalar>(x_j, 0, 0);
-    params.morientation[0] = o;
-    params.morientation[1] = o;
+    params.mpos[0] = make_scalar3(x_i, 0, 0);
+    params.mpos[1] = make_scalar3(x_j, 0, 0);
+    params.morientation[0] = quat_to_scalar4(o);
+    params.morientation[1] = quat_to_scalar4(o);
     params.mparams[0] = par_i;
     params.mparams[1] = par_j;
     params.ignore = 0;
@@ -193,10 +194,10 @@ UP_TEST( overlapping_dumbbells )
 
     ShapeUnion<ShapeSphere>::param_type params(2,false);
     params.diameter = 2*R;
-    params.mpos[0] = vec3<Scalar>(x_i, 0, 0);
-    params.mpos[1] = vec3<Scalar>(x_j, 0, 0);
-    params.morientation[0] = o;
-    params.morientation[1] = o;
+    params.mpos[0] = make_scalar3(x_i, 0, 0);
+    params.mpos[1] = make_scalar3(x_j, 0, 0);
+    params.morientation[0] = quat_to_scalar4(o);
+    params.morientation[1] = quat_to_scalar4(o);
     params.mparams[0] = par_i;
     params.mparams[1] = par_j;
     params.ignore = 0;

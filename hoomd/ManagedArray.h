@@ -205,7 +205,7 @@ class ManagedArray
             if ((sizeof(T)*N) % sizeof(int)) size_int++;
 
             // align ptr to size of data type
-            unsigned long int max_align_bytes = (sizeof(int) > sizeof(T) ? sizeof(int) : sizeof(T))-1;
+            unsigned long int max_align_bytes = ((sizeof(int) > sizeof(T)) ? sizeof(int) : sizeof(T))-1;
             char *ptr_align = (char *)(((unsigned long int)s_ptr + max_align_bytes) & ~max_align_bytes);
 
             if (size_int*sizeof(int)+max_align_bytes > available_bytes)
