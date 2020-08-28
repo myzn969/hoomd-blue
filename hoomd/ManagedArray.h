@@ -201,19 +201,24 @@ class ManagedArray
         HOSTDEVICE void* allocate_shared(char *& s_ptr, unsigned int &available_bytes) const
             {
             // size in ints (round up)
-            unsigned int size_int = (sizeof(T)*N)/sizeof(int);
+            unsigned long long int size_int = (sizeof(T)*N)/sizeof(int);
             if ((sizeof(T)*N) % sizeof(int)) size_int++;
 
-            // align ptr to size of data type
-            unsigned long int max_align_bytes = ((sizeof(int) > sizeof(T)) ? sizeof(int) : sizeof(T))-1;
-            char *ptr_align = (char *)(((unsigned long int)s_ptr + max_align_bytes) & ~max_align_bytes);
+            // next power of two
+            unsigned long long int min_align = ((sizeof(int) > sizeof(T)) ? sizeof(int) : sizeof(T));
+            unsigned long long int align = 1;
+            while (align < min_align)
+                align <<= 1;
 
-            if (size_int*sizeof(int)+max_align_bytes > available_bytes)
+            // align ptr to size of data type
+            char *ptr_align = (char *)(((unsigned long long int)s_ptr + align - 1) & ~(align-1));
+            
+            if (size_int*sizeof(int)+align-1 > available_bytes)
                 return nullptr;
 
             // increment pointer
             s_ptr = ptr_align + size_int*sizeof(int);
-            available_bytes -= size_int*sizeof(int)+max_align_bytes;
+            available_bytes -= size_int*sizeof(int)+align-1;
 
             return (void *)ptr_align;
             }
