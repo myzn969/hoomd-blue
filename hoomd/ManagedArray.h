@@ -30,13 +30,13 @@ class ManagedArray
     public:
         //! Default constructor
         DEVICE ManagedArray()
-            : data(nullptr), ptr(nullptr), N(0), managed(0), align(0),
+            : in_shared(false), s_data(nullptr), ptr(nullptr), N(0), managed(0), align(0),
               allocation_ptr(nullptr), allocation_bytes(0)
             { }
 
         #ifndef __HIPCC__
         ManagedArray(unsigned int _N, bool _managed, size_t _align = 0)
-            : data(nullptr), ptr(nullptr), N(_N), managed(_managed), align(_align),
+            : in_shared(false), s_data(nullptr), ptr(nullptr), N(_N), managed(_managed), align(_align),
               allocation_ptr(nullptr), allocation_bytes(0)
             {
             if (N > 0)
@@ -59,7 +59,7 @@ class ManagedArray
                   needs to be ensured
          */
         DEVICE ManagedArray(const ManagedArray<T>& other)
-            : data(nullptr), ptr(nullptr), N(other.N), managed(other.managed), align(other.align),
+            : in_shared(other.in_shared), s_data(nullptr), ptr(nullptr), N(other.N), managed(other.managed), align(other.align),
               allocation_ptr(nullptr), allocation_bytes(0)
             {
             #ifndef __HIPCC__
@@ -71,7 +71,7 @@ class ManagedArray
                 }
             #else
             ptr = other.ptr;
-            data = other.data;
+            s_data = other.s_data;
             #endif
             }
 
@@ -81,7 +81,7 @@ class ManagedArray
                   needs to be ensured
          */
         DEVICE ManagedArray(const ManagedArray<T>&& other)
-            : data(nullptr), ptr(nullptr), N(other.N), managed(other.managed), align(other.align),
+            : in_shared(other.in_shared), s_data(nullptr), ptr(nullptr), N(other.N), managed(other.managed), align(other.align),
               allocation_ptr(nullptr), allocation_bytes(0)
             {
             #ifndef __HIPCC__
@@ -93,7 +93,7 @@ class ManagedArray
                 }
             #else
             ptr = other.ptr;
-            data = other.data;
+            s_data = other.s_data;
             #endif
             }
 
@@ -108,6 +108,7 @@ class ManagedArray
             deallocate();
             #endif
 
+            in_shared = other.in_shared;
             N = other.N;
             managed = other.managed;
             align = other.align;
@@ -121,7 +122,7 @@ class ManagedArray
                 }
             #else
             ptr = other.ptr;
-            data = other.data;
+            s_data = other.s_data;
             #endif
 
             return *this;
@@ -138,6 +139,7 @@ class ManagedArray
             deallocate();
             #endif
 
+            in_shared = other.in_shared;
             N = other.N;
             managed = other.managed;
             align = other.align;
@@ -151,7 +153,7 @@ class ManagedArray
                 }
             #else
             ptr = other.ptr;
-            data = other.data;
+            s_data = other.s_data;
             #endif
 
             return *this;
@@ -160,25 +162,25 @@ class ManagedArray
         //! random access operator
         HOSTDEVICE inline T& operator[](unsigned int i)
             {
-            return data[i];
+            return in_shared ? s_data[i] : ptr[i];
             }
 
         //! random access operator (const version)
         HOSTDEVICE inline const T& operator[](unsigned int i) const
             {
-            return data[i];
+            return in_shared ? s_data[i] : ptr[i];
             }
 
-        //! Get pointer to array data
+        //! Get pointer to array
         HOSTDEVICE inline T * get()
             {
-            return data;
+            return in_shared ? s_data : ptr;
             }
 
         //! Get pointer to array data (const version)
         HOSTDEVICE inline const T* get() const
             {
-            return data;
+            return in_shared ? s_data : ptr;
             }
 
         #ifdef ENABLE_HIP
@@ -254,7 +256,11 @@ class ManagedArray
                 }
 
             // redirect data ptr
-            data = (T *) ptr_align;
+            if (tidx == 0)
+                {
+                s_data = (T *) ptr_align;
+                in_shared = true;
+                }
             #endif
 
             return true;
@@ -280,7 +286,6 @@ class ManagedArray
         void allocate()
             {
             ptr = managed_allocator<T>::allocate_construct_aligned(N, managed, align, allocation_bytes, allocation_ptr);
-            data = ptr;
             }
 
         void deallocate()
@@ -293,7 +298,8 @@ class ManagedArray
         #endif
 
     private:
-        mutable T *data;         //!< Data pointer
+        mutable bool in_shared;  //!< True if data location is shared memory
+        mutable T *s_data;       //!< Data pointer to shared memory
         T *ptr;                  //!< Original data pointer
         unsigned int N;          //!< Number of data elements
         unsigned int managed;    //!< True if we are CUDA managed
