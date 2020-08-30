@@ -374,92 +374,94 @@ DEVICE inline bool overlap(const OBB& a, const OBB& b, bool exact=true)
     // arithmetic errors when two edges are parallel and their cross prodcut is (near) null
     const OverlapReal eps(1e-6); // can be large, because false positives don't harm
 
-    OverlapReal rabs[3][3];
-    rabs[0][0] = fabs(r.row0.x) + eps;
-    rabs[0][1] = fabs(r.row0.y) + eps;
-    rabs[0][2] = fabs(r.row0.z) + eps;
+    OverlapReal rabs_xx, rabs_xy, rabs_xz;
+    OverlapReal rabs_yx, rabs_yy, rabs_yz;
+    OverlapReal rabs_zx, rabs_zy, rabs_zz;
+    rabs_xx = fabs(r.row0.x) + eps;
+    rabs_xy = fabs(r.row0.y) + eps;
+    rabs_xz = fabs(r.row0.z) + eps;
 
     // test axes L = a0, a1, a2
     OverlapReal ra, rb;
     ra = a.lengths.x;
-    rb = b.lengths.x * rabs[0][0] + b.lengths.y * rabs[0][1] + b.lengths.z*rabs[0][2];
+    rb = b.lengths.x * rabs_xx + b.lengths.y * rabs_xy + b.lengths.z*rabs_xz;
 
     if (fabs(t.x) > ra + rb) return false;
 
-    rabs[1][0] = fabs(r.row1.x) + eps;
-    rabs[1][1] = fabs(r.row1.y) + eps;
-    rabs[1][2] = fabs(r.row1.z) + eps;
+    rabs_yx = fabs(r.row1.x) + eps;
+    rabs_yy = fabs(r.row1.y) + eps;
+    rabs_yz = fabs(r.row1.z) + eps;
 
     ra = a.lengths.y;
-    rb = b.lengths.x * rabs[1][0] + b.lengths.y * rabs[1][1] + b.lengths.z*rabs[1][2];
+    rb = b.lengths.x * rabs_yx + b.lengths.y * rabs_yy + b.lengths.z*rabs_yz;
     if (fabs(t.y) > ra + rb) return false;
 
-    rabs[2][0] = fabs(r.row2.x) + eps;
-    rabs[2][1] = fabs(r.row2.y) + eps;
-    rabs[2][2] = fabs(r.row2.z) + eps;
+    rabs_zx = fabs(r.row2.x) + eps;
+    rabs_zy = fabs(r.row2.y) + eps;
+    rabs_zz = fabs(r.row2.z) + eps;
 
     ra = a.lengths.z;
-    rb = b.lengths.x * rabs[2][0] + b.lengths.y * rabs[2][1] + b.lengths.z*rabs[2][2];
+    rb = b.lengths.x * rabs_zx + b.lengths.y * rabs_zy + b.lengths.z*rabs_zz;
     if (fabs(t.z) > ra + rb) return false;
 
     // test axes L = b0, b1, b2
-    ra = a.lengths.x * rabs[0][0] + a.lengths.y * rabs[1][0] + a.lengths.z*rabs[2][0];
+    ra = a.lengths.x * rabs_xx + a.lengths.y * rabs_yx + a.lengths.z*rabs_zx;
     rb = b.lengths.x;
     if (fabs(t.x*r.row0.x+t.y*r.row1.x+t.z*r.row2.x) > ra + rb) return false;
 
-    ra = a.lengths.x * rabs[0][1] + a.lengths.y * rabs[1][1] + a.lengths.z*rabs[2][1];
+    ra = a.lengths.x * rabs_xy + a.lengths.y * rabs_yy + a.lengths.z*rabs_zy;
     rb = b.lengths.y;
     if (fabs(t.x*r.row0.y+t.y*r.row1.y+t.z*r.row2.y) > ra + rb) return false;
 
-    ra = a.lengths.x * rabs[0][2] + a.lengths.y * rabs[1][2] + a.lengths.z*rabs[2][2];
+    ra = a.lengths.x * rabs_xz + a.lengths.y * rabs_yz + a.lengths.z*rabs_zz;
     rb = b.lengths.z;
     if (fabs(t.x*r.row0.z+t.y*r.row1.z+t.z*r.row2.z) > ra + rb) return false;
 
     if (!exact) return true; // if exactness is not required, skip some tests
 
     // test axis L = A0 x B0
-    ra = a.lengths.y * rabs[2][0] + a.lengths.z*rabs[1][0];
-    rb = b.lengths.y * rabs[0][2] + b.lengths.z*rabs[0][1];
+    ra = a.lengths.y * rabs_zx + a.lengths.z*rabs_yx;
+    rb = b.lengths.y * rabs_xz + b.lengths.z*rabs_xy;
     if (fabs(t.z*r.row1.x-t.y*r.row2.x) > ra + rb) return false;
 
     // test axis L = A0 x B1
-    ra = a.lengths.y * rabs[2][1] + a.lengths.z*rabs[1][1];
-    rb = b.lengths.x * rabs[0][2] + b.lengths.z*rabs[0][0];
+    ra = a.lengths.y * rabs_zy + a.lengths.z*rabs_yy;
+    rb = b.lengths.x * rabs_xz + b.lengths.z*rabs_xx;
     if (fabs(t.z*r.row1.y-t.y*r.row2.y) > ra + rb) return false;
 
     // test axis L = A0 x B2
-    ra = a.lengths.y * rabs[2][2] + a.lengths.z*rabs[1][2];
-    rb = b.lengths.x * rabs[0][1] + b.lengths.y*rabs[0][0];
+    ra = a.lengths.y * rabs_zz + a.lengths.z*rabs_yz;
+    rb = b.lengths.x * rabs_xy + b.lengths.y*rabs_xx;
     if (fabs(t.z*r.row1.z-t.y*r.row2.z) > ra + rb) return false;
 
     // test axis L = A1 x B0
-    ra = a.lengths.x * rabs[2][0] + a.lengths.z*rabs[0][0];
-    rb = b.lengths.y * rabs[1][2] + b.lengths.z*rabs[1][1];
+    ra = a.lengths.x * rabs_zx + a.lengths.z*rabs_xx;
+    rb = b.lengths.y * rabs_yz + b.lengths.z*rabs_yy;
     if (fabs(t.x*r.row2.x - t.z*r.row0.x) > ra + rb) return false;
 
     // test axis L = A1 x B1
-    ra = a.lengths.x * rabs[2][1] + a.lengths.z * rabs[0][1];
-    rb = b.lengths.x * rabs[1][2] + b.lengths.z * rabs[1][0];
+    ra = a.lengths.x * rabs_zy + a.lengths.z * rabs_xy;
+    rb = b.lengths.x * rabs_yz + b.lengths.z * rabs_yx;
     if (fabs(t.x*r.row2.y - t.z*r.row0.y) > ra + rb) return false;
 
     // test axis L = A1 x B2
-    ra = a.lengths.x * rabs[2][2] + a.lengths.z * rabs[0][2];
-    rb = b.lengths.x * rabs[1][1] + b.lengths.y * rabs[1][0];
+    ra = a.lengths.x * rabs_zz + a.lengths.z * rabs_xz;
+    rb = b.lengths.x * rabs_yy + b.lengths.y * rabs_yx;
     if (fabs(t.x*r.row2.z - t.z * r.row0.z) > ra + rb) return false;
 
     // test axis L = A2 x B0
-    ra = a.lengths.x * rabs[1][0] + a.lengths.y * rabs[0][0];
-    rb = b.lengths.y * rabs[2][2] + b.lengths.z * rabs[2][1];
+    ra = a.lengths.x * rabs_yx + a.lengths.y * rabs_xx;
+    rb = b.lengths.y * rabs_zz + b.lengths.z * rabs_zy;
     if (fabs(t.y * r.row0.x - t.x * r.row1.x) > ra + rb) return false;
 
     // test axis L = A2 x B1
-    ra = a.lengths.x * rabs[1][1] + a.lengths.y * rabs[0][1];
-    rb = b.lengths.x * rabs[2][2] + b.lengths.z * rabs[2][0];
+    ra = a.lengths.x * rabs_yy + a.lengths.y * rabs_xy;
+    rb = b.lengths.x * rabs_zz + b.lengths.z * rabs_zx;
     if (fabs(t.y * r.row0.y - t.x * r.row1.y) > ra + rb) return false;
 
     // test axis L = A2 x B2
-    ra = a.lengths.x * rabs[1][2] + a.lengths.y * rabs[0][2];
-    rb = b.lengths.x * rabs[2][1] + b.lengths.y * rabs[2][0];
+    ra = a.lengths.x * rabs_yz + a.lengths.y * rabs_xz;
+    rb = b.lengths.x * rabs_zy + b.lengths.y * rabs_zx;
     if (fabs(t.y*r.row0.z - t.x * r.row1.z) > ra + rb) return false;
 
     // no separating axis found, the OBBs must be intersecting
