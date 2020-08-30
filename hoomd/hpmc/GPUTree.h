@@ -276,7 +276,7 @@ class GPUTree
             auto l = m_lengths[idx];
             obb.lengths = vec3<OverlapReal>(l.x,l.y,l.z);
             auto q = m_rotation[idx];
-            obb.rotation = quat<OverlapReal>(q.w, vec3<OverlapReal>(q.x,q.y,q.z));
+            obb.rotation = quat<OverlapReal>(q.x,vec3<Scalar>(q.y,q.z,q.w));
             obb.mask = m_mask[idx];
             obb.is_sphere = m_is_sphere[idx];
             return obb;
