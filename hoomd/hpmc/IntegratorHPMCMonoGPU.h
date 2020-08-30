@@ -1300,7 +1300,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         m_maxn,
                         d_overflow.data,
                         this->m_exec_conf->dev_prop,
-                        this->m_pdata->getGPUPartition(),
+                        gpu_partition_rank,
                         &m_narrow_phase_streams.front(),
                         0 //tuning parameters
                         );
@@ -1781,19 +1781,33 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         // reduce free energy across columns (particles)
                         #ifdef ENABLE_MPI_CUDA
                         ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::readwrite);
+                        ArrayHandle<unsigned int> d_reject_out(m_reject_out, access_location::device, access_mode::readwrite);
                         MPI_Allreduce(MPI_IN_PLACE,
                             d_F.data,
                             this->m_pdata->getN(),
                             MPI_HOOMD_SCALAR,
                             MPI_SUM,
                             (*m_particle_comm)());
+                        MPI_Allreduce(MPI_IN_PLACE,
+                            d_reject_out.data,
+                            this->m_pdata->getN(),
+                            MPI_UNSIGNED,
+                            MPI_MAX,
+                            (*m_particle_comm)());
                         #else
                         ArrayHandle<Scalar> h_F(m_F, access_location::host, access_mode::readwrite);
+                        ArrayHandle<unsigned int> h_reject_out(m_reject_out, access_location::host, access_mode::readwrite);
                         MPI_Allreduce(MPI_IN_PLACE,
                             h_F.data,
                             this->m_pdata->getN(),
                             MPI_HOOMD_SCALAR,
                             MPI_SUM,
+                            (*m_particle_comm)());
+                        MPI_Allreduce(MPI_IN_PLACE,
+                            h_reject_out.data,
+                            this->m_pdata->getN(),
+                            MPI_UNSIGNED,
+                            MPI_MAX,
                             (*m_particle_comm)());
                         #endif
                         if (this->m_prof) this->m_prof->pop(this->m_exec_conf);
