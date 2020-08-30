@@ -444,13 +444,14 @@ DEVICE inline void findAscent(unsigned int a_count, unsigned int b_count, unsign
  *     }
  */
 DEVICE inline bool traverseBinaryStack(const GPUTree& a, const GPUTree &b, unsigned int& cur_node_a, unsigned int& cur_node_b,
-    unsigned long int &stack, OBB& obb_a, OBB& obb_b, const quat<OverlapReal>& q, const vec3<OverlapReal>& dr)
+    unsigned long int &stack, const quat<OverlapReal>& q, const vec3<OverlapReal>& dr)
     {
     bool leaf = false;
     bool ascend = true;
 
-    unsigned int old_a = cur_node_a;
-    unsigned int old_b = cur_node_b;
+    OBB obb_a = a.getOBB(cur_node_a);
+    obb_a.affineTransform(q, dr);
+    OBB obb_b = b.getOBB(cur_node_b);
 
     if (overlap(obb_a, obb_b))
         {
@@ -499,17 +500,6 @@ DEVICE inline bool traverseBinaryStack(const GPUTree& a, const GPUTree &b, unsig
             cur_node_a -= a_ascent;
             cur_node_b = b.getEscapeIndex(cur_node_b);
             }
-        }
-    if (cur_node_a < a.getNumNodes() && cur_node_b < b.getNumNodes())
-        {
-        // pre-fetch OBBs
-        if (old_a != cur_node_a)
-            {
-            obb_a = a.getOBB(cur_node_a);
-            obb_a.affineTransform(q, dr);
-            }
-        if (old_b != cur_node_b)
-            obb_b = b.getOBB(cur_node_b);
         }
 
     return leaf;
