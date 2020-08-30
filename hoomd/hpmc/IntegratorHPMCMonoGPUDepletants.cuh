@@ -782,7 +782,7 @@ void depletants_launcher(const hpmc_args_t& args, const hpmc_implicit_args_t& im
                                  args.d_type_params);
             }
         }
-    else if (cur_launch_bounds)
+    else
         {
         depletants_launcher<Shape, pairwise>(args, implicit_args, params, max_threads, detail::int2type<cur_launch_bounds/2>());
         }

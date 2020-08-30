@@ -836,7 +836,7 @@ void depletants_launcher_phase1(const hpmc_args_t& args,
                                  args.d_type_params);
             }
         }
-    else if (cur_launch_bounds)
+    else
         {
         depletants_launcher_phase1<Shape, pairwise>(args,
             implicit_args,

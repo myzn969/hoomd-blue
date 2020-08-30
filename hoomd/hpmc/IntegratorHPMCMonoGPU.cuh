@@ -471,7 +471,7 @@ void narrow_phase_launcher(const hpmc_args_t& args, const typename Shape::param_
                 max_extra_bytes, max_queue_size, range.first, nwork, args.d_type_params);
             }
         }
-    else if (cur_launch_bounds)
+    else
         {
         narrow_phase_launcher<Shape>(args, params, max_threads, detail::int2type<cur_launch_bounds/2>());
         }

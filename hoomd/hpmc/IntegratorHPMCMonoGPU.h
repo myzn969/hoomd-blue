@@ -431,7 +431,7 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
         for (unsigned int group_size=1; group_size <= narrow_phase_max_tpp; group_size*=2)
             {
             if ((block_size % group_size) == 0)
-                valid_params_depletants[1].push_back(block_size*100 + group_size);
+                valid_params_depletants[1].push_back(block_size*10000 + group_size);
             }
         }
     for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
@@ -1376,8 +1376,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 m_tuner_depletants->begin();
                                 unsigned int depletants_per_thread = m_tuner_depletants->getParam(0);
                                 unsigned int param = m_tuner_depletants->getParam(1);
-                                args.block_size = param/100;
-                                args.tpp = param%100;
+                                args.block_size = param/10000;
+                                args.tpp = param%10000;
                                 args.d_type_params = m_tuner_depletants->getDeviceParams()+2;
 
                                 gpu::hpmc_implicit_args_t implicit_args(
@@ -1523,8 +1523,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 args.d_type_params = m_tuner_depletants_phase1->getDeviceParams()+2;
                                 implicit_args.depletants_per_thread = m_tuner_depletants_phase1->getParam(0);
                                 unsigned int param = m_tuner_depletants_phase1->getParam(1);
-                                args.block_size = param/100;
-                                args.tpp = param%100;
+                                args.block_size = param/10000;
+                                args.tpp = param%10000;
                                 gpu::hpmc_depletants_auxiliary_phase1<Shape>(args,
                                     implicit_args,
                                     auxiliary_args,
@@ -1538,8 +1538,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 args.d_type_params = m_tuner_depletants_phase2->getDeviceParams()+2;
                                 implicit_args.depletants_per_thread = m_tuner_depletants_phase2->getParam(0);
                                 param = m_tuner_depletants_phase2->getParam(1);
-                                args.block_size = param/100;
-                                args.tpp = param%100;
+                                args.block_size = param/10000;
+                                args.tpp = param%10000;
                                 gpu::hpmc_depletants_auxiliary_phase2<Shape>(args,
                                     implicit_args,
                                     auxiliary_args,
