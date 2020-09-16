@@ -3456,6 +3456,18 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                                 bool overlap_neigh_other = has_overlap || overlap_i_other;
                                 f_neigh_other = overlap_neigh_other + (1-overlap_neigh_other)*f_neigh_other;
 
+                                if (f_k*f_neigh_other/(Scalar)ntrial < -1)
+                                    {
+                                    #ifdef ENABLE_TBB
+                                    thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
+                                    #else
+                                    implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
+                                    #endif
+
+                                    bounds = true;
+                                    throw false;
+                                    }
+
                                 Scalar betaF_other = log(1.0+f_k*f_neigh_other/(Scalar)ntrial);
 
                                 if ((repulsive && new_config) || (!repulsive && !new_config))
