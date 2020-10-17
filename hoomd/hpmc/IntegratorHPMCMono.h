@@ -3020,11 +3020,14 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     f_j = has_overlap + (1-has_overlap)*f_j;
                     if (f_i*f_j/(Scalar)ntrial < -1)
                         {
-                        #ifdef ENABLE_TBB
-                        thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
-                        #else
-                        implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
-                        #endif
+                        if (! shape_i.ignoreStatistics())
+                            {
+                            #ifdef ENABLE_TBB
+                            thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
+                            #else
+                            implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
+                            #endif
+                            }
 
                         bounds = true;
                         throw false;
@@ -3420,11 +3423,14 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             {
                             if (f_k*f_neigh/(Scalar)ntrial < -1)
                                 {
-                                #ifdef ENABLE_TBB
-                                thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
-                                #else
-                                implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
-                                #endif
+                                if (! shape_i.ignoreStatistics())
+                                    {
+                                    #ifdef ENABLE_TBB
+                                    thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
+                                    #else
+                                    implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
+                                    #endif
+                                    }
 
                                 bounds = true;
                                 throw false;
@@ -3458,11 +3464,14 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                                 if (f_k*f_neigh_other/(Scalar)ntrial < -1)
                                     {
-                                    #ifdef ENABLE_TBB
-                                    thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
-                                    #else
-                                    implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
-                                    #endif
+                                    if (! shape_i.ignoreStatistics())
+                                        {
+                                        #ifdef ENABLE_TBB
+                                        thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
+                                        #else
+                                        implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
+                                        #endif
+                                        }
 
                                     bounds = true;
                                     throw false;
