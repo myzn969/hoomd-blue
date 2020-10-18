@@ -598,7 +598,6 @@ std::vector<hpmc_implicit_counters_t> IntegratorHPMCMono<Shape>::getImplicitCoun
         for (unsigned int i = 0; i < m_depletant_idx.getNumElements(); ++i)
             {
             MPI_Allreduce(MPI_IN_PLACE, &result[i].insert_count, 1, MPI_LONG_LONG_INT, MPI_SUM, this->m_exec_conf->getMPICommunicator());
-            MPI_Allreduce(MPI_IN_PLACE, &result[i].bound_violation_count, 1, MPI_LONG_LONG_INT, MPI_SUM, this->m_exec_conf->getMPICommunicator());
             }
         }
     #endif
@@ -717,19 +716,6 @@ Scalar IntegratorHPMCMono<Shape>::getLogValue(const std::string& quantity, unsig
             return Scalar(0.0);
         }
 
-    if (quantity == "hpmc_bound_violations")
-        {
-        const std::vector<hpmc_implicit_counters_t>& result = getImplicitCounters(2);
-
-        // reduce over all types
-        unsigned long long int total_bound_violation_count = 0;
-        for (unsigned int i = 0; i < m_depletant_idx.getNumElements(); ++i)
-            {
-            total_bound_violation_count += result[i].bound_violation_count;
-            }
-        return total_bound_violation_count;
-        }
-
     //nothing found -> pass on to base class
     return IntegratorHPMC::getLogValue(quantity, timestep);
     }
@@ -744,11 +730,9 @@ void IntegratorHPMCMono<Shape>::printStats()
 
     // reduce over all types
     unsigned long long int total_insert_count = 0;
-    unsigned long long int total_bound_violation_count = 0;
     for (unsigned int i = 0; i < m_depletant_idx.getNumElements(); ++i)
         {
         total_insert_count += result[i].insert_count;
-        total_bound_violation_count += result[i].bound_violation_count;
         }
 
     bool has_depletants = false;
@@ -781,22 +765,6 @@ void IntegratorHPMCMono<Shape>::printStats()
                 this->m_exec_conf->msg->notice(3) << "('" << this->m_pdata->getNameByType(i) << "','"
                     << this->m_pdata->getNameByType(j) << "') : "
                     << double(result[this->m_depletant_idx(i,j)].insert_count)/double(counters.getNMoves()) << std::endl;
-                }
-            }
-        }
-
-    this->m_exec_conf->msg->notice(2) << "Probability bound violations:             "
-        << total_bound_violation_count << std::endl;
-
-    for (unsigned int i = 0; i < this->m_pdata->getNTypes(); ++i)
-        {
-        for (unsigned int j = i; j < this->m_pdata->getNTypes(); ++j)
-            {
-            if (m_fugacity[m_depletant_idx(i,j)] != 0.0)
-                {
-                this->m_exec_conf->msg->notice(3) << "('" << this->m_pdata->getNameByType(i) << "','"
-                    << this->m_pdata->getNameByType(j) << "') : "
-                << result[this->m_depletant_idx(i,j)].bound_violation_count << std::endl;
                 }
             }
         }
@@ -3018,23 +2986,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                     f_i = overlap_i + (1-overlap_i)*f_i;
                     f_j = has_overlap + (1-has_overlap)*f_j;
-                    if (f_i*f_j/(Scalar)ntrial < -1)
-                        {
-                        if (! shape_i.ignoreStatistics())
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
-                            #else
-                            implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
-                            #endif
-                            }
 
-                        bounds = true;
-                        throw false;
-                        }
-                    Scalar betaF = log(1.0+f_i*f_j/(Scalar)ntrial);
+                    Scalar betaF = log(1.0+fabs(f_i*f_j)/(Scalar)ntrial);
 
-                    if ((repulsive && new_config) || (!repulsive && !new_config))
+                    bool numerator = (repulsive && !new_config) || (!repulsive && new_config);
+                    numerator ^= f_i*f_j < 0;
+
+                    if (!numerator)
                         {
                         #ifdef ENABLE_TBB
                         thread_ln_denominator.local()[i_trial] += betaF;
@@ -3421,24 +3379,11 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                         if ((tag_i > tag_k) && (interact_i || overlap_i))
                             {
-                            if (f_k*f_neigh/(Scalar)ntrial < -1)
-                                {
-                                if (! shape_i.ignoreStatistics())
-                                    {
-                                    #ifdef ENABLE_TBB
-                                    thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
-                                    #else
-                                    implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
-                                    #endif
-                                    }
+                            Scalar betaF = log(1.0+fabs(f_k*f_neigh)/(Scalar)ntrial);
+                            bool numerator = (repulsive && !new_config) || (!repulsive && new_config);
+                            numerator ^= f_k*f_neigh < 0;
 
-                                bounds = true;
-                                throw false;
-                                }
-
-                            Scalar betaF = log(1.0+f_k*f_neigh/(Scalar)ntrial);
-
-                            if ((repulsive && new_config) || (!repulsive && !new_config))
+                            if (!numerator)
                                 {
                                 #ifdef ENABLE_TBB
                                 thread_ln_denominator.local()[i_trial] += betaF;
@@ -3462,24 +3407,11 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                                 bool overlap_neigh_other = has_overlap || overlap_i_other;
                                 f_neigh_other = overlap_neigh_other + (1-overlap_neigh_other)*f_neigh_other;
 
-                                if (f_k*f_neigh_other/(Scalar)ntrial < -1)
-                                    {
-                                    if (! shape_i.ignoreStatistics())
-                                        {
-                                        #ifdef ENABLE_TBB
-                                        thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().bound_violation_count++;
-                                        #else
-                                        implicit_counters[m_depletant_idx(type_a,type_b)].bound_violation_count++;
-                                        #endif
-                                        }
+                                Scalar betaF_other = log(1.0+fabs(f_k*f_neigh_other)/(Scalar)ntrial);
+                                bool numerator = (repulsive && new_config) || (!repulsive && !new_config);
+                                numerator ^= f_k*f_neigh_other < 0;
 
-                                    bounds = true;
-                                    throw false;
-                                    }
-
-                                Scalar betaF_other = log(1.0+f_k*f_neigh_other/(Scalar)ntrial);
-
-                                if ((repulsive && new_config) || (!repulsive && !new_config))
+                                if (numerator)
                                     {
                                     #ifdef ENABLE_TBB
                                     thread_ln_numerator.local()[i_trial] += betaF_other;
@@ -3610,7 +3542,6 @@ inline void export_hpmc_implicit_counters(pybind11::module& m)
     {
     pybind11::class_< hpmc_implicit_counters_t >(m, "hpmc_implicit_counters_t")
     .def_readwrite("insert_count", &hpmc_implicit_counters_t::insert_count)
-    .def_readwrite("bound_violation_count", &hpmc_implicit_counters_t::bound_violation_count)
     ;
     }
 
