@@ -2431,7 +2431,8 @@ std::vector<hpmc_implicit_counters_t> IntegratorHPMCMonoGPU<Shape>::getImplicitC
         for (unsigned int i = 0; i < this->m_depletant_idx.getNumElements(); ++i)
             {
             MPI_Allreduce(MPI_IN_PLACE, &result[i].insert_count, 1, MPI_LONG_LONG_INT, MPI_SUM, (*m_ntrial_comm)());
-            MPI_Allreduce(MPI_IN_PLACE, &result[i].bound_violation_count, 1, MPI_LONG_LONG_INT, MPI_SUM, (*m_ntrial_comm)());
+            MPI_Allreduce(MPI_IN_PLACE, &result[i].min_bound_violation_count, 1, MPI_LONG_LONG_INT, MPI_SUM, (*m_ntrial_comm)());
+            MPI_Allreduce(MPI_IN_PLACE, &result[i].max_bound_violation_count, 1, MPI_LONG_LONG_INT, MPI_SUM, (*m_ntrial_comm)());
             }
         }
 

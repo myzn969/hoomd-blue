@@ -200,13 +200,15 @@ DEVICE inline hpmc_boxmc_counters_t operator-(const hpmc_boxmc_counters_t& a, co
 struct hpmc_implicit_counters_t
     {
     unsigned long long int insert_count;              //!< Count of depletants inserted
-    unsigned long long int bound_violation_count;       //!< Count of depletants inserted successfully
+    unsigned long long int min_bound_violation_count;       //!< Lower probability bound violations
+    unsigned long long int max_bound_violation_count;       //!< Upper probability bound violations
 
     //! Construct a zero set of counters
     DEVICE hpmc_implicit_counters_t()
         {
         insert_count = 0;
-        bound_violation_count = 0;
+        min_bound_violation_count = 0;
+        max_bound_violation_count = 0;
         }
     };
 
@@ -335,7 +337,8 @@ DEVICE inline hpmc_implicit_counters_t operator-(const hpmc_implicit_counters_t&
     {
     hpmc_implicit_counters_t result;
     result.insert_count = a.insert_count - b.insert_count;
-    result.bound_violation_count = a.bound_violation_count - b.bound_violation_count;
+    result.min_bound_violation_count = a.min_bound_violation_count - b.min_bound_violation_count;
+    result.max_bound_violation_count = a.max_bound_violation_count - b.max_bound_violation_count;
     return result;
     }
 
@@ -344,7 +347,8 @@ DEVICE inline hpmc_implicit_counters_t operator+(const hpmc_implicit_counters_t&
     {
     hpmc_implicit_counters_t result;
     result.insert_count = a.insert_count + b.insert_count;
-    result.bound_violation_count = a.bound_violation_count + b.bound_violation_count;
+    result.min_bound_violation_count = a.min_bound_violation_count + b.min_bound_violation_count;
+    result.max_bound_violation_count = a.max_bound_violation_count + b.max_bound_violation_count;
     return result;
     }
 
