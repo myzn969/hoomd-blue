@@ -2,8 +2,6 @@
 // This file is part of the HOOMD-blue project, released under the BSD 3-Clause License.
 
 // we need the definition of the template functions to instantiate explicitly
-#define __EXPORT_IMPL__
-
 #include "UpdaterClustersGPUDepletants.cuh"
 
 //! This file, with a .cu ending, is auto-generated from the .cu.in template. Do not edit directly.

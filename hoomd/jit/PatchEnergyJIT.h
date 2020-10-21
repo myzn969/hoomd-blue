@@ -9,6 +9,7 @@
 
 #include "EvalFactory.h"
 
+#include <pybind11/pybind11.h>
 
 //! Evaluate patch energies via runtime generated code
 /*! This class enables the widest possible use-cases of patch energies in HPMC with low energy barriers for users to add

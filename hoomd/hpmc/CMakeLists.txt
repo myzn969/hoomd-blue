@@ -20,7 +20,7 @@ endif()
 
 set(_hpmc_union_shapes ShapeSphere
                        ShapeFacetedEllipsoid
-                       ShapeSpheropolyhedron
+                       ShapeConvexPolyhedron
    )
 set(_hpmc_gpu_union_shapes ${_hpmc_union_shapes})
 
@@ -93,23 +93,26 @@ set(_hpmc_cu_sources IntegratorHPMCMonoGPU.cu
 set(_hpmc_module_templates
     analyzer_sdf
     compute_free_volume
-    compute_free_volume_gpu
     external_callback
     external_field_composite
     external_field_interface
     external_field_lattice
     external_field_wall
     integrator_hpmc_mono
-    integrator_hpmc_mono_gpu
     patch_energy_jit
-    patch_energy_jit_gpu
     patch_energy_jit_union
-    patch_energy_jit_union_gpu
     updater_clusters
-    updater_clusters_gpu
     updater_external_field_wall
     updater_muvt
     updater_remove_drift
+    )
+
+set(_hpmc_gpu_module_templates
+    compute_free_volume_gpu
+    integrator_hpmc_mono_gpu
+    patch_energy_jit_gpu
+    patch_energy_jit_union_gpu
+    updater_clusters_gpu
     )
 
 set(_hpmc_kernel_templates kernel_free_volume
@@ -135,7 +138,7 @@ foreach(MODULE ${_hpmc_module_templates})
 
     foreach(SHAPE ${_hpmc_union_shapes})
         set(SHAPE_INCLUDE ${SHAPE}.h)
-        set(_module_cc ${MODULE}_union_${SHAPE}.cc)
+        set(_module_cc ${MODULE}_${SHAPE}_union.cc)
         set(IS_UNION_SHAPE TRUE)
         configure_file(${MODULE}.cc.in ${_module_cc} @ONLY)
         set(_hpmc_sources ${_hpmc_sources} ${_module_cc})
@@ -143,6 +146,26 @@ foreach(MODULE ${_hpmc_module_templates})
 endforeach()
 
 if(ENABLE_HIP)
+    # GPU classes
+    foreach(MODULE ${_hpmc_gpu_module_templates})
+        foreach(SHAPE ${_hpmc_gpu_shapes})
+            set(SHAPE_INCLUDE ${SHAPE}.h)
+            set(IS_UNION_SHAPE FALSE)
+            set(_module_cc ${MODULE}_${SHAPE}.cc)
+            configure_file(${MODULE}.cc.in ${_module_cc} @ONLY)
+            set(_hpmc_sources ${_hpmc_sources} ${_module_cc})
+        endforeach()
+
+        foreach(SHAPE ${_hpmc_gpu_union_shapes})
+            set(SHAPE_INCLUDE ${SHAPE}.h)
+            set(_module_cc ${MODULE}_${SHAPE}_union.cc)
+            set(IS_UNION_SHAPE TRUE)
+            configure_file(${MODULE}.cc.in ${_module_cc} @ONLY)
+            set(_hpmc_sources ${_hpmc_sources} ${_module_cc})
+        endforeach()
+    endforeach()
+
+    # GPU kernels
     foreach(KERNEL ${_hpmc_kernel_templates})
         foreach(SHAPE ${_hpmc_gpu_shapes})
             set(SHAPE_INCLUDE ${SHAPE}.h)
@@ -154,7 +177,7 @@ if(ENABLE_HIP)
 
         foreach(SHAPE ${_hpmc_gpu_union_shapes})
             set(SHAPE_INCLUDE ${SHAPE}.h)
-            set(_kernel_cu ${KERNEL}_union_${SHAPE}.cu)
+            set(_kernel_cu ${KERNEL}_${SHAPE}_union.cu)
             set(IS_UNION_SHAPE TRUE)
             configure_file(${KERNEL}.cu.in ${_kernel_cu} @ONLY)
             set(_hpmc_cu_sources ${_hpmc_cu_sources} ${_kernel_cu})
@@ -189,6 +212,7 @@ endif()
 
 if (BUILD_JIT)
 target_compile_definitions(_hpmc PUBLIC ENABLE_JIT)
+target_link_libraries(_hpmc PUBLIC HOOMD::_jit)
 endif()
 
 fix_cudart_rpath(_hpmc)

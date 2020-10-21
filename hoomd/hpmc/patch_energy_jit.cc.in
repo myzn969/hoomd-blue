@@ -17,6 +17,7 @@
 
 #include "module_factory.h"
 using namespace hpmc;
+
 template void export_PatchEnergyJIT<SHAPE_CLASS(SHAPE)>(pybind11::module& m, const std::string& name);
 
 #endif // ENABLE_JIT

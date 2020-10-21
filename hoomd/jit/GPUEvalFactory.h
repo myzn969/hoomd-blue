@@ -42,7 +42,7 @@
 
     Additionally, it allows access to pointers alpha_iso and alpha_union defined at global scope.
  */
-class GPUEvalFactory
+class PYBIND11_EXPORT GPUEvalFactory
     {
     public:
         //! Constructor

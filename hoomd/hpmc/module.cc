@@ -98,18 +98,22 @@ void export_modules(pybind11::module& m, const std::string& name)
     export_PatchEnergyJIT<Shape>(m, "PatchEnergyJIT"+name);
     export_PatchEnergyJITUnion<Shape>(m, "PatchEnergyJITUnion"+name);
     #endif
+    }
 
-    #ifdef ENABLE_HIP
+#ifdef ENABLE_HIP
+template<class Shape>
+void export_gpu_modules(pybind11::module& m, const std::string& name)
+    {
     export_IntegratorHPMCMonoGPU< Shape >(m, "IntegratorHPMCMonoGPU"+name);
     export_ComputeFreeVolumeGPU< Shape >(m, "ComputeFreeVolumeGPU"+name);
     export_UpdaterClustersGPU< Shape >(m, "UpdaterClustersGPU"+name);
 
     #ifdef ENABLE_JIT
-    export_PatchEnergyJITGPU<Shape>(m, "PatchEnergyJIT"+name);
-    export_PatchEnergyJITUnionGPU<Shape>(m, "PatchEnergyJITUnion"+name);
-    #endif
+    export_PatchEnergyJITGPU<Shape>(m, "PatchEnergyJITGPU"+name);
+    export_PatchEnergyJITUnionGPU<Shape>(m, "PatchEnergyJITUnionGPU"+name);
     #endif
     }
+#endif
 
 //! Define the _hpmc python module exports
 PYBIND11_MODULE(_hpmc, m)
@@ -133,6 +137,24 @@ PYBIND11_MODULE(_hpmc, m)
     export_modules<ShapeUnion<ShapeSphere> >(m, "SphereUnion");
     export_modules<ShapeConvexPolyhedron>(m, "ConvexPolyhedron");
     export_modules<ShapeSpheropolyhedron>(m, "Spheropolyhdron");
+
+    #ifdef ENABLE_HIP
+    export_gpu_modules<ShapeSphere>(m, "Sphere");
+    export_gpu_modules<ShapeConvexPolygon>(m, "ConvexPolygon");
+    export_gpu_modules<ShapeSimplePolygon>(m, "SimplePolygon");
+    export_gpu_modules<ShapeSpheropolygon>(m, "Spheropolygon");
+    export_gpu_modules<ShapePolyhedron>(m, "Polyhedron");
+    export_gpu_modules<ShapeEllipsoid>(m, "Ellipsoid");
+    export_gpu_modules<ShapeFacetedEllipsoid>(m, "FacetedEllipsoid");
+    #ifdef ENABLE_HPMC_SPHINX_GPU
+    export_gpu_modules<ShapeSphinx>(m, "Sphinx");
+    #endif
+    export_gpu_modules<ShapeUnion<ShapeConvexPolyhedron> >(m, "ConvexPolyhedronUnion");
+    export_gpu_modules<ShapeUnion<ShapeFacetedEllipsoid> >(m, "FacetedEllipsoidUnion");
+    export_gpu_modules<ShapeUnion<ShapeSphere> >(m, "SphereUnion");
+    export_gpu_modules<ShapeConvexPolyhedron>(m, "ConvexPolyhedron");
+    export_gpu_modules<ShapeSpheropolyhedron>(m, "Spheropolyhdron");
+    #endif
 
     py::class_<sph_params, std::shared_ptr<sph_params> >(m, "sph_params");
     py::class_<ell_params, std::shared_ptr<ell_params> >(m, "ell_params");

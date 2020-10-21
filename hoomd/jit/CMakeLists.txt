@@ -95,6 +95,7 @@ fix_cudart_rpath(_${PACKAGE_NAME}_llvm)
 
 # install the library
 install(TARGETS _${PACKAGE_NAME} _${PACKAGE_NAME}_llvm
+        EXPORT HOOMDTargets
         LIBRARY DESTINATION ${PYTHON_SITE_INSTALL_DIR}/${PACKAGE_NAME}
         )
 

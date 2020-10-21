@@ -358,6 +358,10 @@ if (BUILD_MD)
     add_subdirectory(md)
 endif()
 
+if (BUILD_JIT)
+    add_subdirectory(jit)
+endif()
+
 if (NOT SINGLE_PRECISION AND BUILD_HPMC)
     add_subdirectory(hpmc)
 endif()
@@ -374,10 +378,6 @@ if (NOT ENABLE_HIP OR HIP_PLATFORM STREQUAL "nvcc")
     if (BUILD_MPCD)
         add_subdirectory(mpcd)
     endif()
-endif()
-
-if (BUILD_JIT)
-    add_subdirectory(jit)
 endif()
 
 file(GLOB _directory_contents RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *)
