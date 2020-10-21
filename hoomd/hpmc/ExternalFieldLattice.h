@@ -576,6 +576,10 @@ class ExternalFieldLattice : public ExternalFieldMono<Shape>
     };
 
 template<class Shape>
+void export_LatticeField(pybind11::module& m, std::string name);
+
+#ifdef __EXPORT_IMPL__
+template<class Shape>
 void export_LatticeField(pybind11::module& m, std::string name)
     {
    pybind11::class_<ExternalFieldLattice<Shape>, ExternalFieldMono<Shape>, std::shared_ptr< ExternalFieldLattice<Shape> > >(m, name.c_str())
@@ -590,6 +594,7 @@ void export_LatticeField(pybind11::module& m, std::string name)
     .def("getSigma", &ExternalFieldLattice<Shape>::getSigma)
     ;
     }
+#endif
 
 void export_LatticeFields(pybind11::module& m);
 

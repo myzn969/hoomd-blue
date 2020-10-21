@@ -1620,7 +1620,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         ArrayHandle<unsigned int> d_reject_out_of_cell(m_reject_out_of_cell, access_location::device, access_mode::read);
                         ArrayHandle<unsigned int> d_overflow_patch(m_overflow_patch, access_location::device, access_mode::readwrite);
 
-                        PatchEnergy::gpu_args_t patch_args(
+                        typename PatchEnergy<Shape>::gpu_args_t patch_args(
                             d_postype.data,
                             d_orientation.data,
                             d_trial_postype.data,
@@ -2444,6 +2444,9 @@ std::vector<hpmc_implicit_counters_t> IntegratorHPMCMonoGPU<Shape>::getImplicitC
 /*! \param name Name of the class in the exported python module
     \tparam Shape An instantiation of IntegratorHPMCMono<Shape> will be exported
 */
+template < class Shape > void export_IntegratorHPMCMonoGPU(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
 template < class Shape > void export_IntegratorHPMCMonoGPU(pybind11::module& m, const std::string& name)
     {
      pybind11::class_<IntegratorHPMCMonoGPU<Shape>, IntegratorHPMCMono<Shape>,
@@ -2456,6 +2459,7 @@ template < class Shape > void export_IntegratorHPMCMonoGPU(pybind11::module& m, 
               #endif
               ;
     }
+#endif
 
 } // end namespace hpmc
 

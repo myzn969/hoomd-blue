@@ -12,11 +12,7 @@ llvm_map_components_to_libnames(llvm_libs executionengine support core irreader 
 # set files to compile
 set(_${PACKAGE_NAME}_sources
      module-${PACKAGE_NAME}.cc
-     PatchEnergyJIT.cc
      GPUEvalFactory.cc
-     PatchEnergyJITGPU.cc
-     PatchEnergyJITUnion.cc
-     PatchEnergyJITUnionGPU.cc
    )
 
 # we compile a separate package just for the LLVM-interfacing part,

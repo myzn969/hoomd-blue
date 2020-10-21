@@ -1737,6 +1737,9 @@ void UpdaterClusters<Shape>::update(unsigned int timestep)
     }
 
 
+template < class Shape> void export_UpdaterClusters(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
 template < class Shape> void export_UpdaterClusters(pybind11::module& m, const std::string& name)
     {
     pybind11::class_< UpdaterClusters<Shape>, Updater, std::shared_ptr< UpdaterClusters<Shape> > >(m, name.c_str())
@@ -1748,6 +1751,7 @@ template < class Shape> void export_UpdaterClusters(pybind11::module& m, const s
         .def("setFlipProbability", &UpdaterClusters<Shape>::setFlipProbability)
     ;
     }
+#endif
 
 inline void export_hpmc_clusters_counters(pybind11::module &m)
     {

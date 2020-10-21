@@ -107,6 +107,10 @@ class RemoveDriftUpdater : public Updater
 
 //! Export the ExampleUpdater class to python
 template <class Shape>
+void export_RemoveDriftUpdater(pybind11::module& m, std::string name);
+
+#ifdef __EXPORT_IMPL__
+template <class Shape>
 void export_RemoveDriftUpdater(pybind11::module& m, std::string name)
     {
     using pybind11::class_;
@@ -116,6 +120,7 @@ void export_RemoveDriftUpdater(pybind11::module& m, std::string name)
                             std::shared_ptr<IntegratorHPMCMono<Shape> > >())
     ;
     }
+#endif
 }
 
 #endif // _REMOVE_DRIFT_UPDATER_H_

@@ -20,7 +20,7 @@ namespace hpmc
 IntegratorHPMC::IntegratorHPMC(std::shared_ptr<SystemDefinition> sysdef,
                                unsigned int seed)
     : Integrator(sysdef, 0.005), m_seed(seed),  m_move_ratio(32768), m_nselect(4),
-      m_nominal_width(1.0), m_extra_ghost_width(0), m_external_base(NULL), m_patch_log(false),
+      m_nominal_width(1.0), m_extra_ghost_width(0), m_external_base(NULL),
       m_past_first_run(false)
       #ifdef ENABLE_MPI
       ,m_communicator_ghost_width_connected(false),
@@ -330,7 +330,6 @@ void export_IntegratorHPMC(py::module& m)
     .def("communicate", &IntegratorHPMC::communicate)
     .def("slotNumTypesChange", &IntegratorHPMC::slotNumTypesChange)
     .def("setDeterministic", &IntegratorHPMC::setDeterministic)
-    .def("disablePatchEnergyLogOnly", &IntegratorHPMC::disablePatchEnergyLogOnly)
     ;
 
    py::class_< hpmc_counters_t >(m, "hpmc_counters_t")

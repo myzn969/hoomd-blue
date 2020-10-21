@@ -4,6 +4,20 @@
 // Include the defined classes that are to be exported to python
 #include "IntegratorHPMC.h"
 #include "IntegratorHPMCMono.h"
+#include "ComputeFreeVolume.h"
+#include "UpdaterClusters.h"
+#include "UpdaterMuVT.h"
+#include "ExternalCallback.h"
+#include "ExternalFieldLattice.h"
+#include "ExternalFieldComposite.h"
+#include "ExternalFieldWall.h"
+#include "UpdaterExternalFieldWall.h"
+#include "UpdaterRemoveDrift.h"
+
+#ifdef ENABLE_JIT
+#include "../jit/PatchEnergyJIT.h"
+#include "../jit/PatchEnergyJITUnion.h"
+#endif
 
 #include "ShapeSphere.h"
 #include "ShapeConvexPolygon.h"
@@ -26,6 +40,13 @@
 
 #ifdef ENABLE_HIP
 #include "IntegratorHPMCMonoGPU.h"
+#include "ComputeFreeVolumeGPU.h"
+#include "UpdaterClustersGPU.h"
+
+#ifdef ENABLE_JIT
+#include "../jit/PatchEnergyJITGPU.h"
+#include "../jit/PatchEnergyJITUnionGPU.h"
+#endif
 #endif
 
 #include "modules.h"
@@ -55,6 +76,41 @@ namespace detail
 
 using namespace hpmc::detail;
 
+template<class Shape>
+void export_modules(pybind11::module& m, const std::string& name)
+    {
+
+    export_IntegratorHPMCMono< Shape >(m, "IntegratorHPMCMono"+name);
+    export_ComputeFreeVolume< Shape >(m, "ComputeFreeVolume"+name);
+    export_AnalyzerSDF< Shape >(m, "AnalyzerSDF"+name);
+    export_UpdaterMuVT< Shape >(m, "UpdaterMuVT"+name);
+    export_UpdaterClusters< Shape >(m, "UpdaterClusters"+name);
+
+    export_ExternalFieldInterface<Shape>(m, "ExternalField"+name);
+    export_LatticeField<Shape>(m, "ExternalFieldLattice"+name);
+    export_ExternalFieldComposite<Shape>(m, "ExternalFieldComposite"+name);
+    export_RemoveDriftUpdater<Shape>(m, "RemoveDriftUpdater"+name);
+    export_ExternalFieldWall<Shape>(m, "Wall"+name);
+    export_UpdaterExternalFieldWall<Shape>(m, "UpdaterExternalFieldWall"+name);
+    export_ExternalCallback<Shape>(m, "ExternalCallback"+name);
+
+    #ifdef ENABLE_JIT
+    export_PatchEnergyJIT<Shape>(m, "PatchEnergyJIT"+name);
+    export_PatchEnergyJITUnion<Shape>(m, "PatchEnergyJITUnion"+name);
+    #endif
+
+    #ifdef ENABLE_HIP
+    export_IntegratorHPMCMonoGPU< Shape >(m, "IntegratorHPMCMonoGPU"+name);
+    export_ComputeFreeVolumeGPU< Shape >(m, "ComputeFreeVolumeGPU"+name);
+    export_UpdaterClustersGPU< Shape >(m, "UpdaterClustersGPU"+name);
+
+    #ifdef ENABLE_JIT
+    export_PatchEnergyJITGPU<Shape>(m, "PatchEnergyJIT"+name);
+    export_PatchEnergyJITUnionGPU<Shape>(m, "PatchEnergyJITUnion"+name);
+    #endif
+    #endif
+    }
+
 //! Define the _hpmc python module exports
 PYBIND11_MODULE(_hpmc, m)
     {
@@ -64,19 +120,19 @@ PYBIND11_MODULE(_hpmc, m)
     export_external_fields(m);
     export_shape_params(m);
 
-    export_sphere(m);
-    export_convex_polygon(m);
-    export_simple_polygon(m);
-    export_spheropolygon(m);
-    export_polyhedron(m);
-    export_ellipsoid(m);
-    export_faceted_ellipsoid(m);
-    export_sphinx(m);
-    export_union_convex_polyhedron(m);
-    export_union_faceted_ellipsoid(m);
-    export_union_sphere(m);
-    export_convex_polyhedron(m);
-    export_convex_spheropolyhedron(m);
+    export_modules<ShapeSphere>(m, "Sphere");
+    export_modules<ShapeConvexPolygon>(m, "ConvexPolygon");
+    export_modules<ShapeSimplePolygon>(m, "SimplePolygon");
+    export_modules<ShapeSpheropolygon>(m, "Spheropolygon");
+    export_modules<ShapePolyhedron>(m, "Polyhedron");
+    export_modules<ShapeEllipsoid>(m, "Ellipsoid");
+    export_modules<ShapeFacetedEllipsoid>(m, "FacetedEllipsoid");
+    export_modules<ShapeSphinx>(m, "Sphinx");
+    export_modules<ShapeUnion<ShapeConvexPolyhedron> >(m, "ConvexPolyhedronUnion");
+    export_modules<ShapeUnion<ShapeFacetedEllipsoid> >(m, "FacetedEllipsoidUnion");
+    export_modules<ShapeUnion<ShapeSphere> >(m, "SphereUnion");
+    export_modules<ShapeConvexPolyhedron>(m, "ConvexPolyhedron");
+    export_modules<ShapeSpheropolyhedron>(m, "Spheropolyhdron");
 
     py::class_<sph_params, std::shared_ptr<sph_params> >(m, "sph_params");
     py::class_<ell_params, std::shared_ptr<ell_params> >(m, "ell_params");

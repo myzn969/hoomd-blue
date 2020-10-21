@@ -145,12 +145,17 @@ class __attribute__ ((visibility ("hidden"))) ExternalCallback : public External
     };
 
 template<class Shape>
+void export_ExternalCallback(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
+template<class Shape>
 void export_ExternalCallback(pybind11::module& m, const std::string& name)
     {
     pybind11::class_<ExternalCallback<Shape>, ExternalFieldMono<Shape>, std::shared_ptr< ExternalCallback<Shape> > >(m, name.c_str())
     .def(pybind11::init< std::shared_ptr<SystemDefinition>, pybind11::object>())
     ;
     }
+#endif
 
 } // namespace hpmc
 

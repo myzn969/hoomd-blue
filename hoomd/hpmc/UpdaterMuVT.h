@@ -2666,6 +2666,9 @@ unsigned int UpdaterMuVT<Shape>::countDepletantOverlaps(unsigned int timestep, u
 /*! \param name Name of the class in the exported python module
     \tparam Shape An instantiation of UpdaterMuVT<Shape> will be exported
 */
+template < class Shape > void export_UpdaterMuVT(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
 template < class Shape > void export_UpdaterMuVT(pybind11::module& m, const std::string& name)
     {
     pybind11::class_< UpdaterMuVT<Shape>, Updater, std::shared_ptr< UpdaterMuVT<Shape> > >(m, name.c_str())
@@ -2677,6 +2680,6 @@ template < class Shape > void export_UpdaterMuVT(pybind11::module& m, const std:
           .def("setNTrial",&hpmc::UpdaterMuVT<Shape>::setNTrial)
           ;
     }
-
+#endif
 } // end namespace hpmc
 #endif

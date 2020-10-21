@@ -190,6 +190,10 @@ class __attribute__ ((visibility ("hidden"))) UpdaterExternalFieldWall : public 
     };
 
 template< class Shape >
+void export_UpdaterExternalFieldWall(pybind11::module& m, std::string name);
+
+#ifdef __EXPORT_IMPL__
+template< class Shape >
 void export_UpdaterExternalFieldWall(pybind11::module& m, std::string name)
     {
    pybind11::class_< UpdaterExternalFieldWall<Shape>, Updater, std::shared_ptr< UpdaterExternalFieldWall<Shape> > >(m, name.c_str())
@@ -199,6 +203,7 @@ void export_UpdaterExternalFieldWall(pybind11::module& m, std::string name)
     .def("resetStats", &UpdaterExternalFieldWall<Shape>::resetStats)
     ;
     }
+#endif
 } // namespace
 
 #endif // inclusion guard

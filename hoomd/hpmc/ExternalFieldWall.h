@@ -838,7 +838,10 @@ class ExternalFieldWall : public ExternalFieldMono<Shape>
     };
 
 
+template<class Shape>
+void export_ExternalFieldWall(pybind11::module& m, const std::string& name);
 
+#ifdef __EXPORT_IMPL__
 template<class Shape>
 void export_ExternalFieldWall(pybind11::module& m, const std::string& name)
 {
@@ -871,6 +874,7 @@ void export_ExternalFieldWall(pybind11::module& m, const std::string& name)
     .def("SetCurrBox", &ExternalFieldWall<Shape>::SetCurrBox)
     ;
 }
+#endif
 
 } // namespace hpmc
 

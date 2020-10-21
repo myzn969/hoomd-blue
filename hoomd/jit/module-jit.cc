@@ -1,9 +1,6 @@
 // Copyright (c) 2009-2019 The Regents of the University of Michigan
 // This file is part of the HOOMD-blue project, released under the BSD 3-Clause License.
 
-#include "PatchEnergyJIT.h"
-#include "PatchEnergyJITUnion.h"
-
 //#include "hoomd/hpmc/IntegratorHPMC.h"
 //#include "hoomd/hpmc/IntegratorHPMCMono.h"
 //#include "hoomd/hpmc/IntegratorHPMCMonoImplicit.h"
@@ -23,11 +20,6 @@
 
 #include <string>
 
-#ifdef ENABLE_HIP
-#include "PatchEnergyJITGPU.h"
-#include "PatchEnergyJITUnionGPU.h"
-#endif
-
 #include <pybind11/pybind11.h>
 
 using namespace hpmc;
@@ -40,9 +32,6 @@ using namespace hpmc::detail;
 
 PYBIND11_MODULE(_jit, m)
     {
-    export_PatchEnergyJIT(m);
-    export_PatchEnergyJITUnion(m);
-
     export_ExternalFieldJIT<ShapeSphere>(m, "ExternalFieldJITSphere");
     export_ExternalFieldJIT<ShapeConvexPolygon>(m, "ExternalFieldJITConvexPolygon");
     export_ExternalFieldJIT<ShapePolyhedron>(m, "ExternalFieldJITPolyhedron");
@@ -58,8 +47,5 @@ PYBIND11_MODULE(_jit, m)
     m.attr("__cuda_devrt_library_path__") = std::string(CUDA_DEVRT_LIBRARY_PATH);
     m.attr("__cuda_include_path__") = std::string(CUDA_INCLUDE_PATH);
     m.attr("__cuda_compute_archs__") = std::string(CUDA_COMPUTE_ARCHS);
-
-    export_PatchEnergyJITGPU(m);
-    export_PatchEnergyJITUnionGPU(m);
     #endif
     }

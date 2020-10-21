@@ -31,105 +31,6 @@
 namespace hpmc
 {
 
-namespace detail
-{
-
-#ifdef ENABLE_HIP
-//! Wraps arguments to kernel::narow_phase_patch functions
-struct hpmc_patch_args_t
-    {
-    //! Construct a hpmc_patch_args_t
-    hpmc_patch_args_t(Scalar4 *_d_postype,
-                Scalar4 *_d_orientation,
-                Scalar4 *_d_trial_postype,
-                Scalar4 *_d_trial_orientation,
-                const Index3D& _ci,
-                const uint3& _cell_dim,
-                const Scalar3& _ghost_width,
-                const unsigned int _N,
-                const unsigned int _N_ghost,
-                const unsigned int _num_types,
-                const BoxDim& _box,
-                const unsigned int *_d_excell_idx,
-                const unsigned int *_d_excell_size,
-                const Index2D& _excli,
-                const Scalar _r_cut_patch,
-                const Scalar *_d_additive_cutoff,
-                unsigned int *_d_nlist_old,
-                unsigned int *_d_nneigh_old,
-                float *_d_energy_old,
-                unsigned int *_d_nlist_new,
-                unsigned int *_d_nneigh_new,
-                float *_d_energy_new,
-                const unsigned int _maxn,
-                unsigned int *_d_overflow,
-                const Scalar *_d_charge,
-                const Scalar *_d_diameter,
-                const unsigned int *_d_reject_out_of_cell,
-                const GPUPartition& _gpu_partition)
-                : d_postype(_d_postype),
-                  d_orientation(_d_orientation),
-                  d_trial_postype(_d_trial_postype),
-                  d_trial_orientation(_d_trial_orientation),
-                  ci(_ci),
-                  cell_dim(_cell_dim),
-                  ghost_width(_ghost_width),
-                  N(_N),
-                  N_ghost(_N_ghost),
-                  num_types(_num_types),
-                  box(_box),
-                  d_excell_idx(_d_excell_idx),
-                  d_excell_size(_d_excell_size),
-                  excli(_excli),
-                  r_cut_patch(_r_cut_patch),
-                  d_additive_cutoff(_d_additive_cutoff),
-                  d_nlist_old(_d_nlist_old),
-                  d_nneigh_old(_d_nneigh_old),
-                  d_energy_old(_d_energy_old),
-                  d_nlist_new(_d_nlist_new),
-                  d_nneigh_new(_d_nneigh_new),
-                  d_energy_new(_d_energy_new),
-                  maxn(_maxn),
-                  d_overflow(_d_overflow),
-                  d_charge(_d_charge),
-                  d_diameter(_d_diameter),
-                  d_reject_out_of_cell(_d_reject_out_of_cell),
-                  gpu_partition(_gpu_partition)
-        { }
-
-    Scalar4 *d_postype;               //!< postype array
-    Scalar4 *d_orientation;           //!< orientation array
-    Scalar4 *d_trial_postype;         //!< New positions (and type) of particles
-    Scalar4 *d_trial_orientation;     //!< New orientations of particles
-    const Index3D& ci;                //!< Cell indexer
-    const uint3& cell_dim;            //!< Cell dimensions
-    const Scalar3& ghost_width;       //!< Width of the ghost layer
-    const unsigned int N;             //!< Number of particles
-    const unsigned int N_ghost;       //!< Number of ghost particles
-    const unsigned int num_types;     //!< Number of particle types
-    const BoxDim& box;                //!< Current simulation box
-    const unsigned int *d_excell_idx;       //!< Expanded cell list
-    const unsigned int *d_excell_size;//!< Size of expanded cells
-    const Index2D& excli;             //!< Excell indexer
-    const Scalar r_cut_patch;        //!< Global cutoff radius
-    const Scalar *d_additive_cutoff; //!< Additive contribution to cutoff per type
-    unsigned int *d_nlist_old;       //!< List of neighbor particle indices, in old configuration of particle i
-    unsigned int *d_nneigh_old;      //!< Number of neighbors
-    float* d_energy_old;             //!< Evaluated energy terms for every neighbor
-    unsigned int *d_nlist_new;       //!< List of neighbor particle indices, in new configuration of particle i
-    unsigned int *d_nneigh_new;      //!< Number of neighbors
-    float* d_energy_new;             //!< Evaluated energy terms for every neighbor
-    const unsigned int maxn;         //!< Max number of neighbors
-    unsigned int *d_overflow;        //!< Overflow condition
-    const Scalar *d_charge;          //!< Particle charges
-    const Scalar *d_diameter;        //!< Particle diameters
-    const unsigned int *d_reject_out_of_cell;   //!< Flag if a particle move has been rejected a priori
-    const GPUPartition& gpu_partition; //!< split particles among GPUs
-    };
-#endif
-
-} // end namespace detail
-
 //! Integrator that implements the HPMC approach
 /*! **Overview** <br>
     IntegratorHPMC is an non-templated base class that implements the basic methods that all HPMC integrators have.
@@ -140,82 +41,6 @@ struct hpmc_patch_args_t
 
     \ingroup hpmc_integrators
 */
-
-class PatchEnergy
-    {
-    public:
-        PatchEnergy() { }
-        virtual ~PatchEnergy() { }
-
-        #ifdef ENABLE_HIP
-        //! A struct that contains the kernel arguments
-        typedef detail::hpmc_patch_args_t gpu_args_t;
-        #endif
-
-        //! Returns the cut-off radius
-        virtual Scalar getRCut()
-            {
-            return 0;
-            }
-
-        //! Returns the geometric extent, per type
-        virtual Scalar getAdditiveCutoff(unsigned int type)
-            {
-            return 0;
-            }
-
-        //! evaluate the energy of the patch interaction
-        /*! \param r_ij Vector pointing from particle i to j
-            \param type_i Integer type index of particle i
-            \param d_i Diameter of particle i
-            \param charge_i Charge of particle i
-            \param q_i Orientation quaternion of particle i
-            \param type_j Integer type index of particle j
-            \param q_j Orientation quaternion of particle j
-            \param d_j Diameter of particle j
-            \param charge_j Charge of particle j
-            \returns Energy of the patch interaction.
-        */
-        virtual float energy(const vec3<float>& r_ij,
-            unsigned int type_i,
-            const quat<float>& q_i,
-            float d_i,
-            float charge_i,
-            unsigned int type_j,
-            const quat<float>& q_j,
-            float d_j,
-            float charge_j)
-            {
-            return 0;
-            }
-
-        #ifdef ENABLE_HIP
-        //! Set autotuner parameters
-        /*! \param enable Enable/disable autotuning
-            \param period period (approximate) in time steps when returning occurs
-        */
-        virtual void setAutotunerParams(bool enable, unsigned int period)
-            {
-            throw std::runtime_error("PatchEnergy (base class) does not support setAutotunerParams");
-            }
-
-        //! Return the autotuner objects
-        virtual std::vector<std::shared_ptr<Autotuner> > getAutotuners()
-            {
-            throw std::runtime_error("PatchEnergy (base class) does not support setAutotunerParams");
-            }
-
-        //! Asynchronously launch the JIT kernel
-        /*! \param args Kernel arguments
-            \param hStream stream to execute on
-            */
-        virtual void computePatchEnergyGPU(const gpu_args_t& args, hipStream_t hStream)
-            {
-            throw std::runtime_error("PatchEnergy (base class) does not support launchKernel");
-            }
-        #endif
-    };
-
 class PYBIND11_EXPORT IntegratorHPMC : public Integrator
     {
     public:
@@ -437,25 +262,6 @@ class PYBIND11_EXPORT IntegratorHPMC : public Integrator
             return m_external_base;
             }
 
-        //! Returns the patch energy interaction
-        std::shared_ptr<PatchEnergy> getPatchInteraction()
-            {
-            if (!m_patch_log)
-                return m_patch;
-            else
-                return std::shared_ptr<PatchEnergy>();
-            }
-
-        //! Compute the energy due to patch interactions
-        /*! \param timestep the current time step
-         * \returns the total patch energy
-         */
-        virtual float computePatchEnergy(unsigned int timestep)
-            {
-            // base class method returns 0
-            return 0.0;
-            }
-
         //! Enable deterministic simulations
         virtual void setDeterministic(bool deterministic) {};
 
@@ -465,18 +271,14 @@ class PYBIND11_EXPORT IntegratorHPMC : public Integrator
             m_past_first_run = true;
             }
 
-        //! Set the patch energy
-        virtual void setPatchEnergy(std::shared_ptr< PatchEnergy > patch)
-            {
-            m_patch = patch;
-            }
-
-        //! Enable the patch energy only for logging
-        /*! \param log if True, only enabled for logging purposes
+        //! Compute the energy due to patch interactions
+        /*! \param timestep the current time step
+         * \returns the total patch energy
          */
-        void disablePatchEnergyLogOnly(bool log)
+        virtual float computePatchEnergy(unsigned int timestep)
             {
-            m_patch_log = log;
+            // base class implementation returns zero
+            return 0.0;
             }
 
     protected:
@@ -494,9 +296,6 @@ class PYBIND11_EXPORT IntegratorHPMC : public Integrator
         ClockSource m_clock;                           //!< Timer for self-benchmarking
 
         ExternalField* m_external_base; //! This is a cast of the derived class's m_external that can be used in a more general setting.
-
-        std::shared_ptr< PatchEnergy > m_patch;     //!< Patchy Interaction
-        bool m_patch_log;                           //!< If true, only use patch energy for logging
 
         bool m_past_first_run;                      //!< Flag to test if the first run() has started
         //! Update the nominal width of the cells

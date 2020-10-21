@@ -1049,6 +1049,10 @@ void UpdaterClustersGPU< Shape >::slotNumTypesChange()
     }
 
 template <class Shape>
+void export_UpdaterClustersGPU(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
+template <class Shape>
 void export_UpdaterClustersGPU(pybind11::module& m, const std::string& name)
     {
     pybind11::class_< UpdaterClustersGPU<Shape>, UpdaterClusters<Shape>,
@@ -1060,6 +1064,7 @@ void export_UpdaterClustersGPU(pybind11::module& m, const std::string& name)
         .def("getAutotuners", &UpdaterClustersGPU<Shape>::getAutotuners)
     ;
     }
+#endif
 
 } // end namespace hpmc
 

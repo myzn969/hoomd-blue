@@ -65,7 +65,10 @@ class ExternalFieldMonoComposite : public ExternalFieldMono<Shape>
     };
 
 
+template<class Shape>
+void export_ExternalFieldComposite(pybind11::module& m, std::string name);
 
+#ifdef __EXPORT_IMPL__
 template<class Shape>
 void export_ExternalFieldComposite(pybind11::module& m, std::string name)
 {
@@ -75,6 +78,7 @@ void export_ExternalFieldComposite(pybind11::module& m, std::string name)
     ;
 
 }
+#endif
 
 
 } // namespace

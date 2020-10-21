@@ -312,6 +312,9 @@ void ComputeFreeVolumeGPU< Shape >::initializeExcellMem()
 /*! \param name Name of the class in the exported python module
     \tparam Shape An instantiation of IntegratorHPMCMono<Shape> will be exported
 */
+template < class Shape > void export_ComputeFreeVolumeGPU(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
 template < class Shape > void export_ComputeFreeVolumeGPU(pybind11::module& m, const std::string& name)
     {
      pybind11::class_<ComputeFreeVolumeGPU<Shape>, ComputeFreeVolume<Shape>, std::shared_ptr< ComputeFreeVolumeGPU<Shape> > >(m, name.c_str())
@@ -322,6 +325,7 @@ template < class Shape > void export_ComputeFreeVolumeGPU(pybind11::module& m, c
                 std::string >())
         ;
     }
+#endif
 
 } // end namespace hpmc
 

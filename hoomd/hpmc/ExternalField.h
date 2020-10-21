@@ -73,6 +73,10 @@ class ExternalFieldMono : public ExternalField
 
 
 template<class Shape>
+void export_ExternalFieldInterface(pybind11::module& m, std::string name);
+
+#ifdef __EXPORT_IMPL__
+template<class Shape>
 void export_ExternalFieldInterface(pybind11::module& m, std::string name)
     {
    pybind11::class_< ExternalFieldMono<Shape>, Compute, std::shared_ptr< ExternalFieldMono<Shape> > >(m, (name + "Interface").c_str())
@@ -83,6 +87,7 @@ void export_ExternalFieldInterface(pybind11::module& m, std::string name)
     .def("calculateDeltaE", &ExternalFieldMono<Shape>::calculateDeltaE)
     ;
     }
+#endif
 
 } // end namespace hpmc
 

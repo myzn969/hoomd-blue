@@ -85,14 +85,17 @@ class GPUEvalFactory
            \param eval_threads template parameter
            \param launch_bounds template parameter
          */
+        template<class Shape>
         unsigned int getKernelMaxThreads(unsigned int idev, unsigned int eval_threads, unsigned int launch_bounds)
             {
             int max_threads = 0;
 
             #ifdef __HIP_PLATFORM_NVCC__
+            using jitify::reflection::Type;
+
             CUresult custatus = cuFuncGetAttribute(&max_threads,
                 CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
-                m_program[idev].kernel(m_kernel_name).instantiate(eval_threads, launch_bounds));
+                m_program[idev].kernel(m_kernel_name).instantiate(Type<Shape>(), eval_threads, launch_bounds));
             char *error;
             if (custatus != CUDA_SUCCESS)
                 {
@@ -109,14 +112,16 @@ class GPUEvalFactory
            \param eval_threads template parameter
            \param launch_bounds template parameter
          */
+        template<class Shape>
         unsigned int getKernelSharedSize(unsigned int idev, unsigned int eval_threads, unsigned int launch_bounds)
             {
             int shared_size = 0;
 
             #ifdef __HIP_PLATFORM_NVCC__
+            using jitify::reflection::Type;
             CUresult custatus = cuFuncGetAttribute(&shared_size,
                 CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
-                m_program[idev].kernel(m_kernel_name).instantiate(eval_threads, launch_bounds));
+                m_program[idev].kernel(m_kernel_name).instantiate(Type<Shape>(), eval_threads, launch_bounds));
             char *error;
             if (custatus != CUDA_SUCCESS)
                 {
@@ -138,20 +143,24 @@ class GPUEvalFactory
             \param launch_bounds template parameter
             */
         #ifdef __HIP_PLATFORM_NVCC__
+        template<class Shape>
         jitify::KernelLauncher configureKernel(unsigned int idev, dim3 grid, dim3 threads, unsigned int sharedMemBytes, cudaStream_t hStream,
             unsigned int eval_threads, unsigned int launch_bounds)
             {
             cudaSetDevice(m_exec_conf->getGPUIds()[idev]);
 
+            using jitify::reflection::Type;
             return m_program[idev].kernel(m_kernel_name)
-                .instantiate(eval_threads, launch_bounds)
+                .instantiate(Type<Shape>(), eval_threads, launch_bounds)
                 .configure(grid, threads, sharedMemBytes, hStream);
             }
         #endif
 
+        template<class Shape>
         void setAlphaPtr(float *d_alpha)
             {
             #ifdef __HIP_PLATFORM_NVCC__
+            using jitify::reflection::Type;
             auto gpu_map = m_exec_conf->getGPUIds();
             for (int idev = m_exec_conf->getNumActiveGPUs()-1; idev >= 0; --idev)
                 {
@@ -162,7 +171,7 @@ class GPUEvalFactory
                     for (auto l: m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(e,l)
+                            .instantiate(Type<Shape>(), e, l)
                             .get_global_ptr("alpha_iso");
 
                         // copy the array pointer to the device
@@ -179,9 +188,11 @@ class GPUEvalFactory
             #endif
             }
 
+        template<class Shape>
         void setAlphaUnionPtr(float *d_alpha_union)
             {
             #ifdef __HIP_PLATFORM_NVCC__
+            using jitify::reflection::Type;
             auto gpu_map = m_exec_conf->getGPUIds();
             for (int idev = m_exec_conf->getNumActiveGPUs()-1; idev >= 0; --idev)
                 {
@@ -192,7 +203,7 @@ class GPUEvalFactory
                     for (auto l:  m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(e, l)
+                            .instantiate(Type<Shape>(), e, l)
                             .get_global_ptr("alpha_union");
 
                         // copy the array pointer to the device
@@ -209,9 +220,11 @@ class GPUEvalFactory
             #endif
             }
 
+        template<class Shape>
         void setRCutUnion(float rcut)
             {
             #ifdef __HIP_PLATFORM_NVCC__
+            using jitify::reflection::Type;
             auto gpu_map = m_exec_conf->getGPUIds();
             for (int idev = m_exec_conf->getNumActiveGPUs()-1; idev >= 0; --idev)
                 {
@@ -222,7 +235,7 @@ class GPUEvalFactory
                     for (auto l:  m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(e,l)
+                            .instantiate(Type<Shape>(), e, l)
                             .get_global_ptr("jit::d_rcut_union");
 
                         // copy the array pointer to the device
@@ -239,9 +252,11 @@ class GPUEvalFactory
             #endif
             }
 
+        template<class Shape>
         void setUnionParamsPtr(jit::union_params_t *d_params)
             {
             #ifdef __HIP_PLATFORM_NVCC__
+            using jitify::reflection::Type;
             auto gpu_map = m_exec_conf->getGPUIds();
             for (int idev = m_exec_conf->getNumActiveGPUs()-1; idev >= 0; --idev)
                 {
@@ -252,7 +267,7 @@ class GPUEvalFactory
                     for (auto l:  m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(e, l)
+                            .instantiate(Type<Shape>(), e, l)
                             .get_global_ptr("jit::d_union_params");
 
                         // copy the array pointer to the device

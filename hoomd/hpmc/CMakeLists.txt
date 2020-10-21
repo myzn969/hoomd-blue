@@ -1,6 +1,6 @@
 # Maintainer: joaander
 
-set(_hpmc_gpu_shapes ShapeSphere
+set(_hpmc_shapes ShapeSphere
                  ShapeConvexPolygon
                  ShapeSimplePolygon
                  ShapeSpheropolygon
@@ -9,33 +9,23 @@ set(_hpmc_gpu_shapes ShapeSphere
                  ShapeFacetedEllipsoid
                  ShapeConvexPolyhedron
                  ShapeSpheropolyhedron
+                 ShapeSphinx
                  )
 
+set(_hpmc_gpu_shapes ${_hpmc_shapes})
 option(ENABLE_HPMC_SPHINX_GPU "Enable sphinx on the GPU" OFF)
-if (ENABLE_HPMC_SPHINX_GPU)
-    set(_hpmc_gpu_shapes ${_hpmc_gpu_shapes} ShapeSphinx)
+if (NOT ENABLE_HPMC_SPHINX_GPU)
+    LIST(REMOVE_ITEM _hpmc_gpu_shapes ShapeSphinx)
 endif()
 
-set(_hpmc_gpu_union_shapes ShapeSphere
+set(_hpmc_union_shapes ShapeSphere
                        ShapeFacetedEllipsoid
                        ShapeSpheropolyhedron
    )
+set(_hpmc_gpu_union_shapes ${_hpmc_union_shapes})
 
 set(_hpmc_sources   module.cc
                     module_external_field.cc
-                    module_sphere.cc
-                    module_convex_polygon.cc
-                    module_simple_polygon.cc
-                    module_spheropolygon.cc
-                    module_polyhedron.cc
-                    module_ellipsoid.cc
-                    module_faceted_ellipsoid.cc
-                    module_sphinx.cc
-                    module_union_convex_polyhedron.cc
-                    module_union_faceted_ellipsoid.cc
-                    module_union_sphere.cc
-                    module_convex_polyhedron.cc
-                    module_convex_spheropolyhedron.cc
                     UpdaterBoxMC.cc
                     IntegratorHPMC.cc
                     )
@@ -100,6 +90,28 @@ set(_hpmc_cu_sources IntegratorHPMCMonoGPU.cu
                      UpdaterClustersGPU.cu
                      )
 
+set(_hpmc_module_templates
+    analyzer_sdf
+    compute_free_volume
+    compute_free_volume_gpu
+    external_callback
+    external_field_composite
+    external_field_interface
+    external_field_lattice
+    external_field_wall
+    integrator_hpmc_mono
+    integrator_hpmc_mono_gpu
+    patch_energy_jit
+    patch_energy_jit_gpu
+    patch_energy_jit_union
+    patch_energy_jit_union_gpu
+    updater_clusters
+    updater_clusters_gpu
+    updater_external_field_wall
+    updater_muvt
+    updater_remove_drift
+    )
+
 set(_hpmc_kernel_templates kernel_free_volume
                            kernel_gen_moves
                            kernel_narrow_phase
@@ -111,8 +123,26 @@ set(_hpmc_kernel_templates kernel_free_volume
                            kernel_depletants_auxiliary_phase1
                            kernel_depletants_auxiliary_phase2)
 
+# expand the shape x GPU kernel matrix of template instantiations
+foreach(MODULE ${_hpmc_module_templates})
+    foreach(SHAPE ${_hpmc_shapes})
+        set(SHAPE_INCLUDE ${SHAPE}.h)
+        set(IS_UNION_SHAPE FALSE)
+        set(_module_cc ${MODULE}_${SHAPE}.cc)
+        configure_file(${MODULE}.cc.in ${_module_cc} @ONLY)
+        set(_hpmc_sources ${_hpmc_sources} ${_module_cc})
+    endforeach()
+
+    foreach(SHAPE ${_hpmc_union_shapes})
+        set(SHAPE_INCLUDE ${SHAPE}.h)
+        set(_module_cc ${MODULE}_union_${SHAPE}.cc)
+        set(IS_UNION_SHAPE TRUE)
+        configure_file(${MODULE}.cc.in ${_module_cc} @ONLY)
+        set(_hpmc_sources ${_hpmc_sources} ${_module_cc})
+    endforeach()
+endforeach()
+
 if(ENABLE_HIP)
-    # expand the shape x GPU kernel matrix of template instantiations
     foreach(KERNEL ${_hpmc_kernel_templates})
         foreach(SHAPE ${_hpmc_gpu_shapes})
             set(SHAPE_INCLUDE ${SHAPE}.h)
@@ -155,6 +185,10 @@ target_link_libraries(_hpmc PUBLIC _hoomd)
 
 if (ENABLE_HIP AND HIP_PLATFORM STREQUAL "nvcc")
 target_link_libraries(_hpmc PUBLIC CUDA::cusparse )
+endif()
+
+if (BUILD_JIT)
+target_compile_definitions(_hpmc PUBLIC ENABLE_JIT)
 endif()
 
 fix_cudart_rpath(_hpmc)

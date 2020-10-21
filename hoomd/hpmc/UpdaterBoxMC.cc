@@ -326,11 +326,8 @@ inline bool UpdaterBoxMC::box_resize_trial(Scalar Lx,
 
     BoxDim curBox = m_pdata->getGlobalBox();
 
-    if (m_mc->getPatchInteraction())
-        {
-        // energy of old configuration
-        deltaE -= m_mc->computePatchEnergy(timestep);
-        }
+    // energy of old configuration
+    deltaE -= m_mc->computePatchEnergy(timestep);
 
     // Attempt box resize and check for overlaps
     BoxDim newBox = m_pdata->getGlobalBox();
@@ -340,7 +337,7 @@ inline bool UpdaterBoxMC::box_resize_trial(Scalar Lx,
 
     bool allowed = m_mc->attemptBoxResize(timestep, newBox);
 
-    if (allowed && m_mc->getPatchInteraction())
+    if (allowed)
         {
         deltaE += m_mc->computePatchEnergy(timestep);
         }

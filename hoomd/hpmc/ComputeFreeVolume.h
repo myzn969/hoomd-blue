@@ -307,6 +307,9 @@ Scalar ComputeFreeVolume<Shape>::getLogValue(const std::string& quantity, unsign
 /*! \param name Name of the class in the exported python module
     \tparam Shape An instantiation of IntegratorHPMCMono<Shape> will be exported
 */
+template < class Shape > void export_ComputeFreeVolume(pybind11::module& m, const std::string& name);
+
+#ifdef __EXPORT_IMPL__
 template < class Shape > void export_ComputeFreeVolume(pybind11::module& m, const std::string& name)
     {
      pybind11::class_<ComputeFreeVolume<Shape>, Compute, std::shared_ptr< ComputeFreeVolume<Shape> > >(m, name.c_str())
@@ -319,6 +322,7 @@ template < class Shape > void export_ComputeFreeVolume(pybind11::module& m, cons
         .def("setTestParticleType", &ComputeFreeVolume<Shape>::setTestParticleType)
         ;
     }
+#endif
 
 } // end namespace hpmc
 

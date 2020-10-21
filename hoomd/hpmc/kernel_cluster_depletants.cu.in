@@ -1,6 +1,9 @@
 // Copyright (c) 2009-2019 The Regents of the University of Michigan
 // This file is part of the HOOMD-blue project, released under the BSD 3-Clause License.
 
+// we need the definition of the template functions to instantiate explicitly
+#define __EXPORT_IMPL__
+
 #include "UpdaterClustersGPUDepletants.cuh"
 
 //! This file, with a .cu ending, is auto-generated from the .cu.in template. Do not edit directly.
@@ -10,16 +13,7 @@
 #cmakedefine SHAPE_INCLUDE @SHAPE_INCLUDE@ // the name of the include file
 #cmakedefine IS_UNION_SHAPE  // define to generate a kernel for a ShapeUnion<...>
 
-#define XSTR(x) #x
-#define STR(x) XSTR(x)
-#include STR(SHAPE_INCLUDE)
-
-#ifdef IS_UNION_SHAPE
-#include "ShapeUnion.h"
-#define SHAPE_CLASS(T) ShapeUnion<T>
-#else
-#define SHAPE_CLASS(T) T
-#endif
+#include "module_factory.h"
 
 namespace hpmc
 {

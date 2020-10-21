@@ -10,16 +10,7 @@
 #cmakedefine SHAPE_INCLUDE @SHAPE_INCLUDE@ // the name of the include file
 #cmakedefine IS_UNION_SHAPE  // define to generate a kernel for a ShapeUnion<...>
 
-#define XSTR(x) #x
-#define STR(x) XSTR(x)
-#include STR(SHAPE_INCLUDE)
-
-#ifdef IS_UNION_SHAPE
-#include "ShapeUnion.h"
-#define SHAPE_CLASS(T) ShapeUnion<T>
-#else
-#define SHAPE_CLASS(T) T
-#endif
+#include "module_factory.h"
 
 namespace hpmc
 {
