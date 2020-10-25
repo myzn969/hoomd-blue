@@ -60,8 +60,11 @@ __global__ void hpmc_narrow_phase_patch(
                            const unsigned int max_queue_size,
                            const unsigned int work_offset,
                            const unsigned int nwork,
-                           const unsigned int max_extra_bytes,
-                           const unsigned int *d_type_params)
+                           const unsigned int max_extra_bytes
+#ifdef UNION_EVAL
+                           , const unsigned int *d_type_params
+#endif
+                           )
     {
     __shared__ unsigned int s_queue_size;
     __shared__ unsigned int s_still_searching;
