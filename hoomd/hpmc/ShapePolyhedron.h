@@ -818,12 +818,18 @@ DEVICE inline bool test_overlap(const vec3<Scalar>& r_ab,
     unsigned int cur_node_a = 0;
     unsigned int cur_node_b = 0;
 
+    detail::OBB obb_a = tree_a.getOBB(cur_node_a);
+    obb_a.affineTransform(q, dr_rot);
+
+    detail::OBB obb_b = tree_b.getOBB(cur_node_b);
+
+
     while (cur_node_a != tree_a.getNumNodes() && cur_node_b != tree_b.getNumNodes())
         {
         unsigned int query_node_a = cur_node_a;
         unsigned int query_node_b = cur_node_b;
 
-        if (detail::traverseBinaryStack(tree_a, tree_b, cur_node_a, cur_node_b, stack, q, dr_rot)
+        if (detail::traverseBinaryStack(tree_a, tree_b, cur_node_a, cur_node_b, stack, obb_a, obb_b, q,dr_rot)
             && test_narrow_phase_overlap(dr_rot, a, b, query_node_a, query_node_b, err, abs_tol)) return true;
         }
     #endif

@@ -349,6 +349,11 @@ DEVICE inline bool test_overlap(const vec3<Scalar>& r_ab,
     vec3<OverlapReal> dr_rot(rotate(conj(b.orientation),-r_ab));
     quat<OverlapReal> q(conj(b.orientation)*a.orientation);
 
+    detail::OBB obb_a = tree_a.getOBB(cur_node_a);
+    obb_a.affineTransform(q, dr_rot);
+
+    detail::OBB obb_b = tree_b.getOBB(cur_node_b);
+
     unsigned int query_node_a = UINT_MAX;
     unsigned int query_node_b = UINT_MAX;
 
@@ -357,7 +362,7 @@ DEVICE inline bool test_overlap(const vec3<Scalar>& r_ab,
         query_node_a = cur_node_a;
         query_node_b = cur_node_b;
 
-        if (detail::traverseBinaryStack(tree_a, tree_b, cur_node_a, cur_node_b, stack, q, dr_rot)
+        if (detail::traverseBinaryStack(tree_a, tree_b, cur_node_a, cur_node_b, stack, obb_a, obb_b, q, dr_rot)
             && test_narrow_phase_overlap(r_ab, a, b, query_node_a, query_node_b, err))
             return true;
         }
