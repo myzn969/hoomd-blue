@@ -42,16 +42,14 @@
 
     Additionally, it allows access to pointers alpha_iso and alpha_union defined at global scope.
  */
-class PYBIND11_EXPORT GPUEvalFactory
+class PYBIND11_EXPORT NVRTCEvalFactory
     {
     public:
         //! Constructor
-        GPUEvalFactory(std::shared_ptr<ExecutionConfiguration> exec_conf,
+        NVRTCEvalFactory(std::shared_ptr<const ExecutionConfiguration> exec_conf,
                        const std::string& code,
                        const std::string& kernel_name,
-                       const std::vector<std::string>& options,
-                       const std::string& cuda_devrt_library_path,
-                       unsigned int compute_arch)
+                       const std::vector<std::string>& options)
             : m_exec_conf(exec_conf), m_kernel_name(kernel_name)
             {
             for (unsigned int i = 1; i <= (unsigned int) m_exec_conf->dev_prop.warpSize; i *= 2)
@@ -65,10 +63,10 @@ class PYBIND11_EXPORT GPUEvalFactory
             m_cache.resize(this->m_exec_conf->getNumActiveGPUs());
             #endif
 
-            compileGPU(code, kernel_name, options, cuda_devrt_library_path, compute_arch);
+            compileGPU(code, kernel_name, options);
             }
 
-        ~GPUEvalFactory()
+        ~NVRTCEvalFactory()
             { }
 
         //! Return the list of available launch bounds
@@ -84,8 +82,11 @@ class PYBIND11_EXPORT GPUEvalFactory
         /* \param idev the logical GPU id
            \param eval_threads template parameter
            \param launch_bounds template parameter
+
+           \tparam T A kernel template parameter.
+                     In the future, we want to make the number of kernel template arguments variadic.
          */
-        template<class Shape>
+        template<class T>
         unsigned int getKernelMaxThreads(unsigned int idev, unsigned int eval_threads, unsigned int launch_bounds)
             {
             int max_threads = 0;
@@ -95,7 +96,7 @@ class PYBIND11_EXPORT GPUEvalFactory
 
             CUresult custatus = cuFuncGetAttribute(&max_threads,
                 CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
-                m_program[idev].kernel(m_kernel_name).instantiate(Type<Shape>(), eval_threads, launch_bounds));
+                m_program[idev].kernel(m_kernel_name).instantiate(Type<T>(), eval_threads, launch_bounds));
             char *error;
             if (custatus != CUDA_SUCCESS)
                 {
@@ -112,7 +113,7 @@ class PYBIND11_EXPORT GPUEvalFactory
            \param eval_threads template parameter
            \param launch_bounds template parameter
          */
-        template<class Shape>
+        template<class T>
         unsigned int getKernelSharedSize(unsigned int idev, unsigned int eval_threads, unsigned int launch_bounds)
             {
             int shared_size = 0;
@@ -121,7 +122,7 @@ class PYBIND11_EXPORT GPUEvalFactory
             using jitify::reflection::Type;
             CUresult custatus = cuFuncGetAttribute(&shared_size,
                 CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
-                m_program[idev].kernel(m_kernel_name).instantiate(Type<Shape>(), eval_threads, launch_bounds));
+                m_program[idev].kernel(m_kernel_name).instantiate(Type<T>(), eval_threads, launch_bounds));
             char *error;
             if (custatus != CUDA_SUCCESS)
                 {
@@ -143,7 +144,7 @@ class PYBIND11_EXPORT GPUEvalFactory
             \param launch_bounds template parameter
             */
         #ifdef __HIP_PLATFORM_NVCC__
-        template<class Shape>
+        template<class T>
         jitify::KernelLauncher configureKernel(unsigned int idev, dim3 grid, dim3 threads, unsigned int sharedMemBytes, cudaStream_t hStream,
             unsigned int eval_threads, unsigned int launch_bounds)
             {
@@ -151,12 +152,12 @@ class PYBIND11_EXPORT GPUEvalFactory
 
             using jitify::reflection::Type;
             return m_program[idev].kernel(m_kernel_name)
-                .instantiate(Type<Shape>(), eval_threads, launch_bounds)
+                .instantiate(Type<T>(), eval_threads, launch_bounds)
                 .configure(grid, threads, sharedMemBytes, hStream);
             }
         #endif
 
-        template<class Shape>
+        template<class T>
         void setAlphaPtr(float *d_alpha)
             {
             #ifdef __HIP_PLATFORM_NVCC__
@@ -171,7 +172,7 @@ class PYBIND11_EXPORT GPUEvalFactory
                     for (auto l: m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(Type<Shape>(), e, l)
+                            .instantiate(Type<T>(), e, l)
                             .get_global_ptr("alpha_iso");
 
                         // copy the array pointer to the device
@@ -188,7 +189,7 @@ class PYBIND11_EXPORT GPUEvalFactory
             #endif
             }
 
-        template<class Shape>
+        template<class T>
         void setAlphaUnionPtr(float *d_alpha_union)
             {
             #ifdef __HIP_PLATFORM_NVCC__
@@ -203,7 +204,7 @@ class PYBIND11_EXPORT GPUEvalFactory
                     for (auto l:  m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(Type<Shape>(), e, l)
+                            .instantiate(Type<T>(), e, l)
                             .get_global_ptr("alpha_union");
 
                         // copy the array pointer to the device
@@ -220,7 +221,7 @@ class PYBIND11_EXPORT GPUEvalFactory
             #endif
             }
 
-        template<class Shape>
+        template<class T>
         void setRCutUnion(float rcut)
             {
             #ifdef __HIP_PLATFORM_NVCC__
@@ -235,7 +236,7 @@ class PYBIND11_EXPORT GPUEvalFactory
                     for (auto l:  m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(Type<Shape>(), e, l)
+                            .instantiate(Type<T>(), e, l)
                             .get_global_ptr("jit::d_rcut_union");
 
                         // copy the array pointer to the device
@@ -252,7 +253,7 @@ class PYBIND11_EXPORT GPUEvalFactory
             #endif
             }
 
-        template<class Shape>
+        template<class T>
         void setUnionParamsPtr(jit::union_params_t *d_params)
             {
             #ifdef __HIP_PLATFORM_NVCC__
@@ -267,7 +268,7 @@ class PYBIND11_EXPORT GPUEvalFactory
                     for (auto l:  m_launch_bounds)
                         {
                         CUdeviceptr ptr = m_program[idev].kernel(m_kernel_name)
-                            .instantiate(Type<Shape>(), e, l)
+                            .instantiate(Type<T>(), e, l)
                             .get_global_ptr("jit::d_union_params");
 
                         // copy the array pointer to the device
@@ -285,7 +286,7 @@ class PYBIND11_EXPORT GPUEvalFactory
             }
 
     private:
-        std::shared_ptr<ExecutionConfiguration> m_exec_conf; //!< The exceuction configuration
+        std::shared_ptr<const ExecutionConfiguration> m_exec_conf; //!< The exceuction configuration
         std::vector<unsigned int> m_eval_threads;            //!< The number of template paramteres
         std::vector<unsigned int> m_launch_bounds;           //!< The number of different __launch_bounds__
         const std::string m_kernel_name;                     //!< The name of the __global__ function
@@ -293,9 +294,7 @@ class PYBIND11_EXPORT GPUEvalFactory
         //! Helper function for RTC
         void compileGPU(const std::string& code,
             const std::string& kernel_name,
-            const std::vector<std::string>& options,
-            const std::string& cuda_devrt_library_path,
-            unsigned int compute_arch);
+            const std::vector<std::string>& options);
 
         #ifdef __HIP_PLATFORM_NVCC__
         std::vector<jitify::JitCache> m_cache;          //!< jitify kernel cache, one per GPU

@@ -9,6 +9,7 @@
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUTypes.cuh"
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsTypes.cuh"
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh"
+#include "hoomd/hpmc/IntegratorHPMCMonoGPUJIT.h"
 
 #include "hoomd/Autotuner.h"
 #include "hoomd/GlobalArray.h"
@@ -154,8 +155,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
             // number of times the overlap kernels are excuted per nselect
 
             // The *actual* number of launches per iteration depends
-            // on the longest event chain in the system. We don't know what the
-            // average will be, so put in a constant number
+            // on the longest event chain in the system.
             unsigned int chain_length = 4;
 
             m_tuner_update_pdata->setPeriod(period*this->m_nselect);
@@ -166,12 +166,6 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
 
             m_tuner_narrow->setPeriod(chain_length*period*this->m_nselect);
             m_tuner_narrow->setEnabled(enable);
-
-            if (this->m_patch && !this->m_patch_log)
-                {
-                this->m_patch->setAutotunerParams(enable,
-                    chain_length*period*this->m_nselect);
-                }
 
             m_tuner_depletants->setPeriod(chain_length*period*this->m_nselect);
             m_tuner_depletants->setEnabled(enable);
@@ -196,6 +190,12 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
 
             m_tuner_depletants_phase2->setPeriod(chain_length*period*this->m_nselect);
             m_tuner_depletants_phase2->setEnabled(enable);
+
+            if (this->m_patch && !this->m_patch_log)
+                {
+                m_tuner_narrow_patch->setPeriod(chain_length*period*this->m_nselect);
+                m_tuner_narrow_patch->setEnabled(enable);
+                }
             }
 
         //! Return the list of autotuners
@@ -207,8 +207,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
             l.push_back(m_tuner_narrow);
             if (this->m_patch && !this->m_patch_log)
                 {
-                for (auto t: this->m_patch->getAutotuners())
-                    l.push_back(t);
+                l.push_back(m_tuner_narrow_patch);
                 }
             l.push_back(m_tuner_depletants);
             l.push_back(m_tuner_excell_block_size);
@@ -245,6 +244,16 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         virtual std::vector<hpmc_implicit_counters_t> getImplicitCounters(unsigned int mode=0);
         #endif
 
+        //! Set the patch energy
+        template<class JIT>
+        void setPatchEnergy(std::shared_ptr<JIT> patch)
+            {
+            // base class method
+            IntegratorHPMCMono<Shape>::setPatchEnergy(patch);
+
+            m_jit_narrow = std::make_unique<gpu::JITNarrowPhaseImpl<Shape, JIT> >(this->m_exec_conf, patch);
+            }
+
     protected:
         std::shared_ptr<CellList> m_cl;                      //!< Cell list
         uint3 m_last_dim;                                    //!< Dimensions of the cell list on the last call to update
@@ -265,6 +274,9 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         std::shared_ptr<Autotuner> m_tuner_num_depletants_ntrial;   //!< Autotuner for calculating number of depletants with ntrial
         std::shared_ptr<Autotuner> m_tuner_depletants_phase1;//!< Tuner for depletants with ntrial, phase 1 kernel
         std::shared_ptr<Autotuner> m_tuner_depletants_phase2;//!< Tuner for depletants with ntrial, phase 2 kernel
+        std::shared_ptr<Autotuner> m_tuner_narrow_patch;     //!< Tuner for patch interactions
+
+        std::unique_ptr<gpu::JITNarrowPhase<Shape> > m_jit_narrow; //!< Energy kernel for patch interactions
 
         GlobalArray<Scalar4> m_trial_postype;                 //!< New positions (and type) of particles
         GlobalArray<Scalar4> m_trial_orientation;             //!< New orientations
@@ -443,6 +455,30 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
     m_tuner_depletants = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants", this->m_exec_conf));
     m_tuner_depletants_phase1 = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants_phase1", this->m_exec_conf));
     m_tuner_depletants_phase2 = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants, 5, 100000, "hpmc_depletants_phase2", this->m_exec_conf));
+
+    // tuning params for patch narrow phase
+    std::vector<std::vector< unsigned int > > valid_params_patch(this->m_sysdef->getParticleData()->getNTypes()+1);
+    const unsigned int narrow_phase_max_threads_per_eval = this->m_exec_conf->dev_prop.warpSize;
+    for (unsigned int block_size = dev_prop.warpSize; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += dev_prop.warpSize)
+        {
+        for (unsigned int group_size=1; group_size <= narrow_phase_max_tpp; group_size*=2)
+            {
+            for (unsigned int eval_threads=1; eval_threads <= narrow_phase_max_threads_per_eval; eval_threads *= 2)
+                {
+                if ((block_size % (group_size*eval_threads)) == 0)
+                    valid_params_patch[0].push_back(block_size*1000000 + group_size*100 + eval_threads);
+                }
+            }
+        }
+
+    tuning_bits = jit::union_params_t::getTuningBits();
+    for (unsigned int itype = 0; itype < this->m_sysdef->getParticleData()->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params_patch[1+itype].push_back(param);
+        }
+
+    m_tuner_narrow_patch = std::shared_ptr<Autotuner>(new Autotuner(valid_params_patch, 5, 100000, "hpmc_narrow_patch", this->m_exec_conf));
 
     // initialize memory
     GlobalArray<Scalar4>(1,this->m_exec_conf).swap(m_trial_postype);
@@ -957,7 +993,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
         // resize data structures for depletants with ntrial > 0
         bool have_auxiliary_variables = false;
-        bool have_depletants = false;
         unsigned int ntrial_tot = 0;
 
         #ifdef ENABLE_MPI
@@ -998,7 +1033,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                 {
                 if (this->m_fugacity[this->m_depletant_idx(itype,jtype)] == 0)
                     continue;
-                have_depletants = true;
                 unsigned int ntrial = this->m_ntrial[this->m_depletant_idx(itype,jtype)];
                 if (ntrial == 0)
                     continue;
@@ -1620,7 +1654,14 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         ArrayHandle<unsigned int> d_reject_out_of_cell(m_reject_out_of_cell, access_location::device, access_mode::read);
                         ArrayHandle<unsigned int> d_overflow_patch(m_overflow_patch, access_location::device, access_mode::readwrite);
 
-                        typename PatchEnergy<Shape>::gpu_args_t patch_args(
+                        this->m_exec_conf->beginMultiGPU();
+                        m_tuner_narrow_patch->begin();
+                        unsigned int param = m_tuner_narrow_patch->getParam(0);
+                        unsigned int block_size = param/1000000;
+                        unsigned int tpp = (param%1000000)/100;
+                        unsigned int eval_threads = param % 100;
+
+                        gpu::hpmc_patch_args_t patch_args(
                             d_postype.data,
                             d_orientation.data,
                             d_trial_postype.data,
@@ -1648,10 +1689,22 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             d_charge.data,
                             d_diameter.data,
                             d_reject_out_of_cell.data,
-                            this->m_pdata->getGPUPartition());
+                            this->m_pdata->getGPUPartition(),
+                            block_size,
+                            tpp,
+                            eval_threads,
+                            0, // default stream
+                            m_tuner_narrow_patch->getDeviceParams()
+                            );
 
-                        // compute patch energy on default stream
-                        this->m_patch->computePatchEnergyGPU(patch_args, 0);
+                        // compute patch energy
+                        m_jit_narrow->operator()(patch_args);
+
+                        if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
+                            CHECK_CUDA_ERROR();
+
+                        m_tuner_narrow_patch->end();
+                        this->m_exec_conf->endMultiGPU();
                         } // end ArrayHandle scope
 
                     reallocate = checkReallocatePatch();
@@ -2457,6 +2510,10 @@ template < class Shape > void export_IntegratorHPMCMonoGPU(pybind11::module& m, 
               .def("setNtrialCommunicator", &IntegratorHPMCMonoGPU<Shape>::setNtrialCommunicator)
               .def("setParticleCommunicator", &IntegratorHPMCMonoGPU<Shape>::setParticleCommunicator)
               #endif
+              .def("setPatchEnergy", pybind11::overload_cast<std::shared_ptr<PatchEnergyJITGPU> >
+                (&IntegratorHPMCMonoGPU<Shape>::template setPatchEnergy<PatchEnergyJITGPU>))
+              .def("setPatchEnergy", pybind11::overload_cast<std::shared_ptr<PatchEnergyJITUnionGPU> >
+                (&IntegratorHPMCMonoGPU<Shape>::template setPatchEnergy<PatchEnergyJITUnionGPU>))
               ;
     }
 #endif

@@ -14,11 +14,6 @@
 #include "UpdaterExternalFieldWall.h"
 #include "UpdaterRemoveDrift.h"
 
-#ifdef ENABLE_JIT
-#include "../jit/PatchEnergyJIT.h"
-#include "../jit/PatchEnergyJITUnion.h"
-#endif
-
 #include "ShapeSphere.h"
 #include "ShapeConvexPolygon.h"
 #include "ShapePolyhedron.h"
@@ -42,11 +37,6 @@
 #include "IntegratorHPMCMonoGPU.h"
 #include "ComputeFreeVolumeGPU.h"
 #include "UpdaterClustersGPU.h"
-
-#ifdef ENABLE_JIT
-#include "../jit/PatchEnergyJITGPU.h"
-#include "../jit/PatchEnergyJITUnionGPU.h"
-#endif
 #endif
 
 #include "modules.h"
@@ -93,11 +83,6 @@ void export_modules(pybind11::module& m, const std::string& name)
     export_ExternalFieldWall<Shape>(m, "Wall"+name);
     export_UpdaterExternalFieldWall<Shape>(m, "UpdaterExternalFieldWall"+name);
     export_ExternalCallback<Shape>(m, "ExternalCallback"+name);
-
-    #ifdef ENABLE_JIT
-    export_PatchEnergyJIT<Shape>(m, "PatchEnergyJIT"+name);
-    export_PatchEnergyJITUnion<Shape>(m, "PatchEnergyJITUnion"+name);
-    #endif
     }
 
 #ifdef ENABLE_HIP
@@ -107,11 +92,6 @@ void export_gpu_modules(pybind11::module& m, const std::string& name)
     export_IntegratorHPMCMonoGPU< Shape >(m, "IntegratorHPMCMonoGPU"+name);
     export_ComputeFreeVolumeGPU< Shape >(m, "ComputeFreeVolumeGPU"+name);
     export_UpdaterClustersGPU< Shape >(m, "UpdaterClustersGPU"+name);
-
-    #ifdef ENABLE_JIT
-    export_PatchEnergyJITGPU<Shape>(m, "PatchEnergyJITGPU"+name);
-    export_PatchEnergyJITUnionGPU<Shape>(m, "PatchEnergyJITUnionGPU"+name);
-    #endif
     }
 #endif
 

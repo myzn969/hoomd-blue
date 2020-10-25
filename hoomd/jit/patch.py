@@ -165,10 +165,12 @@ class user(object):
             for a in compute_archs.split('_'):
                 if int(a) < int(compute_major)*10+int(compute_major):
                     max_arch = int(a)
+            options.append("--gpu-architecture=compute_"+str(max_arch))
 
             gpu_code = self.wrap_gpu_code(code)
+
             self.cpp_evaluator = _jit.PatchEnergyJITGPU(hoomd.context.current.device.cpp_exec_conf, llvm_ir, r_cut, array_size,
-                gpu_code, "hpmc::gpu::kernel::hpmc_narrow_phase_patch", options, cuda_devrt_library_path, max_arch);
+                gpu_code, options);
         else:
             self.cpp_evaluator = _jit.PatchEnergyJIT(hoomd.context.current.device.cpp_exec_conf, llvm_ir, r_cut, array_size);
 
@@ -256,10 +258,6 @@ float eval(const vec3<float>& r_ij,
         '''
 
         cpp_function = """
-#include "hoomd/HOOMDMath.h"
-#include "hoomd/VectorMath.h"
-#include "hoomd/hpmc/IntegratorHPMCMonoGPUJIT.inc"
-
 // these are allocated by the library
 __device__ float *alpha_iso;
 __device__ float *alpha_union;
@@ -411,11 +409,6 @@ class user_union(user):
             include_path_cuda = _jit.__cuda_include_path__
             options = ["-I"+include_path_hoomd, "-I"+include_path_source, "-I"+include_path_cuda]
 
-            # use union evaluator
-            options += ["-DUNION_EVAL"]
-
-            cuda_devrt_library_path = _jit.__cuda_devrt_library_path__
-
             # select maximum supported compute capability out of those we compile for
             compute_archs = _jit.__cuda_compute_archs__;
             compute_archs_vec = _hoomd.std_vector_uint()
@@ -425,11 +418,13 @@ class user_union(user):
             for a in compute_archs.split('_'):
                 if int(a) < int(compute_major)*10+int(compute_major):
                     max_arch = int(a)
+            options.append("--gpu-architecture=compute_"+str(max_arch))
 
             gpu_code = self.wrap_gpu_code(code)
+
             self.cpp_evaluator = _jit.PatchEnergyJITUnionGPU(hoomd.context.current.system_definition, hoomd.context.current.device.cpp_exec_conf,
                 llvm_ir_iso, r_cut_iso, array_size_iso, llvm_ir, r_cut,  array_size,
-                gpu_code, "hpmc::gpu::kernel::hpmc_narrow_phase_patch", options, cuda_devrt_library_path, max_arch);
+                gpu_code, options);
         else:
             self.cpp_evaluator = _jit.PatchEnergyJITUnion(hoomd.context.current.system_definition, hoomd.context.current.device.cpp_exec_conf,
                 llvm_ir_iso, r_cut_iso, array_size_iso, llvm_ir, r_cut,  array_size);

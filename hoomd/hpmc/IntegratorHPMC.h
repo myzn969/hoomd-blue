@@ -9,24 +9,13 @@
     \brief Declaration of IntegratorHPMC
 */
 
-#ifdef ENABLE_HIP
-#include <hip/hip_runtime.h>
-#endif
-
 #include "hoomd/Integrator.h"
 #include "hoomd/CellList.h"
 
 #include "HPMCCounters.h"
 #include "ExternalField.h"
 
-#ifndef __HIPCC__
 #include <pybind11/pybind11.h>
-#endif
-
-#ifdef ENABLE_HIP
-#include "hoomd/GPUPartition.cuh"
-#include "hoomd/Autotuner.h"
-#endif
 
 namespace hpmc
 {
@@ -41,6 +30,51 @@ namespace hpmc
 
     \ingroup hpmc_integrators
 */
+
+class PatchEnergy
+    {
+    public:
+        PatchEnergy() { }
+        virtual ~PatchEnergy() { }
+
+        //! Returns the cut-off radius
+        virtual Scalar getRCut()
+            {
+            return 0;
+            }
+
+        //! Returns the geometric extent, per type
+        virtual Scalar getAdditiveCutoff(unsigned int type)
+            {
+            return 0;
+            }
+
+        //! evaluate the energy of the patch interaction
+        /*! \param r_ij Vector pointing from particle i to j
+            \param type_i Integer type index of particle i
+            \param d_i Diameter of particle i
+            \param charge_i Charge of particle i
+            \param q_i Orientation quaternion of particle i
+            \param type_j Integer type index of particle j
+            \param q_j Orientation quaternion of particle j
+            \param d_j Diameter of particle j
+            \param charge_j Charge of particle j
+            \returns Energy of the patch interaction.
+        */
+        virtual float energy(const vec3<float>& r_ij,
+            unsigned int type_i,
+            const quat<float>& q_i,
+            float d_i,
+            float charge_i,
+            unsigned int type_j,
+            const quat<float>& q_j,
+            float d_j,
+            float charge_j)
+            {
+            return 0;
+            }
+    };
+
 class PYBIND11_EXPORT IntegratorHPMC : public Integrator
     {
     public:
@@ -262,6 +296,25 @@ class PYBIND11_EXPORT IntegratorHPMC : public Integrator
             return m_external_base;
             }
 
+        //! Returns the patch energy interaction
+        std::shared_ptr<PatchEnergy> getPatchInteraction()
+            {
+            if (!m_patch_log)
+                return m_patch;
+            else
+                return std::shared_ptr<PatchEnergy>();
+            }
+
+        //! Compute the energy due to patch interactions
+        /*! \param timestep the current time step
+         * \returns the total patch energy
+         */
+        virtual float computePatchEnergy(unsigned int timestep)
+            {
+            // base class method returns 0
+            return 0.0;
+            }
+
         //! Enable deterministic simulations
         virtual void setDeterministic(bool deterministic) {};
 
@@ -271,14 +324,18 @@ class PYBIND11_EXPORT IntegratorHPMC : public Integrator
             m_past_first_run = true;
             }
 
-        //! Compute the energy due to patch interactions
-        /*! \param timestep the current time step
-         * \returns the total patch energy
-         */
-        virtual float computePatchEnergy(unsigned int timestep)
+        //! Set the patch energy
+        virtual void setPatchEnergy(std::shared_ptr< PatchEnergy > patch)
             {
-            // base class implementation returns zero
-            return 0.0;
+            m_patch = patch;
+            }
+
+        //! Enable the patch energy only for logging
+        /*! \param log if True, only enabled for logging purposes
+         */
+        void disablePatchEnergyLogOnly(bool log)
+            {
+            m_patch_log = log;
             }
 
     protected:
@@ -296,6 +353,9 @@ class PYBIND11_EXPORT IntegratorHPMC : public Integrator
         ClockSource m_clock;                           //!< Timer for self-benchmarking
 
         ExternalField* m_external_base; //! This is a cast of the derived class's m_external that can be used in a more general setting.
+
+        std::shared_ptr< PatchEnergy > m_patch;     //!< Patchy Interaction
+        bool m_patch_log;                           //!< If true, only use patch energy for logging
 
         bool m_past_first_run;                      //!< Flag to test if the first run() has started
         //! Update the nominal width of the cells

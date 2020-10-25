@@ -12,7 +12,11 @@ llvm_map_components_to_libnames(llvm_libs executionengine support core irreader 
 # set files to compile
 set(_${PACKAGE_NAME}_sources
      module-${PACKAGE_NAME}.cc
-     GPUEvalFactory.cc
+     PatchEnergyJIT.cc
+     PatchEnergyJITGPU.cc
+     PatchEnergyJITUnion.cc
+     PatchEnergyJITUnionGPU.cc
+     NVRTCEvalFactory.cc
    )
 
 # we compile a separate package just for the LLVM-interfacing part,
@@ -28,8 +32,9 @@ set(_${PACKAGE_NAME}_headers PatchEnergyJIT.h
                              Evaluator.cuh
                              EvaluatorUnionGPU.cuh
                              ExternalFieldEvalFactory.h
-                             GPUEvalFactory.h
+                             NVRTCEvalFactory.h
                              KaleidoscopeJIT.h
+                             JITKernel.h
                              jitify.hpp
    )
 

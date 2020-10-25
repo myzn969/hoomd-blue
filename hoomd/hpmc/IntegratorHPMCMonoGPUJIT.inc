@@ -23,7 +23,12 @@ namespace kernel
  */
 template<class Shape, unsigned int eval_threads, unsigned int max_threads>
 __launch_bounds__(max_threads)
-__global__ void hpmc_narrow_phase_patch(Scalar4 *d_postype,
+#ifdef UNION_EVAL
+__global__ void hpmc_narrow_phase_patch_union(
+#else
+__global__ void hpmc_narrow_phase_patch(
+#endif
+                           Scalar4 *d_postype,
                            Scalar4 *d_orientation,
                            Scalar4 *d_trial_postype,
                            Scalar4 *d_trial_orientation,

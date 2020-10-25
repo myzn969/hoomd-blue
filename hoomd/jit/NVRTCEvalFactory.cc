@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "GPUEvalFactory.h"
+#include "NVRTCEvalFactory.h"
 
 // pybind11 vector bindings
 #include <pybind11/pybind11.h>
@@ -19,17 +19,13 @@
 #include <nvrtc.h>
 #endif
 
-void GPUEvalFactory::compileGPU(
+void NVRTCEvalFactory::compileGPU(
     const std::string& code,
     const std::string& kernel_name,
-    const std::vector<std::string>& options,
-    const std::string& cuda_devrt_library_path,
-    const unsigned int compute_arch)
+    const std::vector<std::string>& options)
     {
     #if __HIP_PLATFORM_NVCC__
     std::vector<std::string> compile_options = {
-        "--gpu-architecture=compute_"+std::to_string(compute_arch),
-        "--relocatable-device-code=true",
         "--std=c++11",
 #ifdef ENABLE_HPMC_MIXED_PRECISION
         "-DENABLE_HPMC_MIXED_PRECISION",

@@ -55,6 +55,7 @@ set(_hpmc_headers
     IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase2.cuh
     IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh
     IntegratorHPMCMonoGPUJIT.inc
+    IntegratorHPMCMonoGPUJIT.h
     IntegratorHPMCMonoGPU.h
     IntegratorHPMCMono.h
     MinkowskiMath.h
@@ -99,8 +100,6 @@ set(_hpmc_module_templates
     external_field_lattice
     external_field_wall
     integrator_hpmc_mono
-    patch_energy_jit
-    patch_energy_jit_union
     updater_clusters
     updater_external_field_wall
     updater_muvt
@@ -110,8 +109,6 @@ set(_hpmc_module_templates
 set(_hpmc_gpu_module_templates
     compute_free_volume_gpu
     integrator_hpmc_mono_gpu
-    patch_energy_jit_gpu
-    patch_energy_jit_union_gpu
     updater_clusters_gpu
     )
 

@@ -4,12 +4,11 @@
 #include "hoomd/HOOMDMath.h"
 #include "hoomd/VectorMath.h"
 #include "hoomd/ExecutionConfiguration.h"
-#include "hoomd/hpmc/IntegratorHPMCMono.h"
+#include "hoomd/hpmc/IntegratorHPMC.h"
 #include "hoomd/managed_allocator.h"
 
 #include "EvalFactory.h"
 
-#include <pybind11/pybind11.h>
 
 //! Evaluate patch energies via runtime generated code
 /*! This class enables the widest possible use-cases of patch energies in HPMC with low energy barriers for users to add
@@ -33,8 +32,7 @@
     LLVM JIT is capable of calling any function in the hosts address space. PatchEnergyJIT does not take advantage of
     that, limiting the user to a very specific API for computing the energy between a pair of particles.
 */
-template<class Shape>
-class PYBIND11_EXPORT PatchEnergyJIT : public hpmc::PatchEnergy<Shape>
+class PYBIND11_EXPORT PatchEnergyJIT : public hpmc::PatchEnergy
     {
     public:
         //! Constructor
@@ -81,7 +79,7 @@ class PYBIND11_EXPORT PatchEnergyJIT : public hpmc::PatchEnergy<Shape>
 
         static pybind11::object getAlphaNP(pybind11::object self)
             {
-            auto self_cpp = self.cast<PatchEnergyJIT<Shape> *>();
+            auto self_cpp = self.cast<PatchEnergyJIT *>();
             return pybind11::array(self_cpp->m_alpha_size, self_cpp->m_factory->getAlphaArray(), self);
             }
 
@@ -96,54 +94,6 @@ class PYBIND11_EXPORT PatchEnergyJIT : public hpmc::PatchEnergy<Shape>
         std::vector<float, managed_allocator<float> > m_alpha; //!< Array containing adjustable parameters
     };
 
-/*! \param exec_conf The execution configuration (used for messages and MPI communication)
-    \param llvm_ir Contents of the LLVM IR to load
-    \param r_cut Center to center distance beyond which the patch energy is 0
-
-    After construction, the LLVM IR is loaded, compiled, and the energy() method is ready to be called.
-*/
-template<class Shape>
-PatchEnergyJIT<Shape>::PatchEnergyJIT(std::shared_ptr<ExecutionConfiguration> exec_conf,
-                const std::string& llvm_ir, Scalar r_cut, const unsigned int array_size)
-    : m_exec_conf(exec_conf), m_r_cut(r_cut), m_alpha_size(array_size),
-      m_alpha(array_size, 0.0, managed_allocator<float>(m_exec_conf->isCUDAEnabled()))
-    {
-    // build the JIT.
-    m_factory = std::shared_ptr<EvalFactory>(new EvalFactory(llvm_ir));
-
-    // get the evaluator
-    m_eval = m_factory->getEval();
-
-    if (!m_eval)
-        {
-        exec_conf->msg->error() << m_factory->getError() << std::endl;
-        throw std::runtime_error("Error compiling JIT code.");
-        }
-
-    m_factory->setAlphaArray(&m_alpha.front());
-    }
-
-template<class Shape>
-void export_PatchEnergyJIT(pybind11::module &m, const std::string& name);
-
-#ifdef __EXPORT_IMPL__
-template<class Shape>
-void export_PatchEnergyJIT(pybind11::module &m, const std::string& name)
-    {
-    pybind11::class_<typename hpmc::PatchEnergy<Shape>,
-               std::shared_ptr<typename hpmc::PatchEnergy<Shape> > >(m, name.c_str())
-              .def(pybind11::init< >());
-    pybind11::class_<PatchEnergyJIT<Shape>, typename hpmc::PatchEnergy<Shape>,
-                     std::shared_ptr<PatchEnergyJIT<Shape> > >(m, name.c_str())
-            .def(pybind11::init< std::shared_ptr<ExecutionConfiguration>,
-                                 const std::string&,
-                                 Scalar,
-                                 const unsigned int >())
-            .def("getRCut", &PatchEnergyJIT<Shape>::getRCut)
-            .def("energy", &PatchEnergyJIT<Shape>::energy)
-            .def_property_readonly("alpha_iso",&PatchEnergyJIT<Shape>::getAlphaNP)
-            ;
-    }
-#endif
-
+//! Exports the PatchEnergyJIT class to python
+void export_PatchEnergyJIT(pybind11::module &m);
 #endif // _PATCH_ENERGY_JIT_H_
