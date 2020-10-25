@@ -10,6 +10,8 @@
 #include "GPUHelpers.cuh"
 #include "hoomd/WarpTools.cuh"
 
+#include "Shapes.h"
+
 namespace hpmc
 {
 namespace gpu

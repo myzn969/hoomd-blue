@@ -14,20 +14,11 @@
 #include "UpdaterExternalFieldWall.h"
 #include "UpdaterRemoveDrift.h"
 
-#include "ShapeSphere.h"
-#include "ShapeConvexPolygon.h"
-#include "ShapePolyhedron.h"
-#include "ShapeConvexPolyhedron.h"
-#include "ShapeSpheropolyhedron.h"
-#include "ShapeSpheropolygon.h"
-#include "ShapeSimplePolygon.h"
-#include "ShapeEllipsoid.h"
-#include "ShapeFacetedEllipsoid.h"
-#include "ShapeSphinx.h"
-#include "ShapeUnion.h"
 #include "AnalyzerSDF.h"
 #include "UpdaterBoxMC.h"
 #include "UpdaterClusters.h"
+
+#include "Shapes.h"
 
 #include "ShapeProxy.h"
 
