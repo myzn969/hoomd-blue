@@ -28,7 +28,7 @@ class PYBIND11_EXPORT JITKernel
                   const std::string& kernel_code,
                   const std::string& kernel_name,
                   std::shared_ptr<JIT> jit)
-            : m_factory(exec_conf, kernel_code + m_jit->getEvaluatorCode(), kernel_name, jit->getCompilerOptions()),
+            : m_factory(exec_conf, kernel_code + jit->getEvaluatorCode(), kernel_name, jit->getCompilerOptions()),
               m_jit(jit)
             { }
 
