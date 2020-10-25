@@ -192,7 +192,7 @@ add_library(HOOMD::_hpmc ALIAS _hpmc)
 if (APPLE)
 set_target_properties(_hpmc PROPERTIES INSTALL_RPATH "@loader_path/..;@loader_path")
 else()
-set_target_properties(_hpmc PROPERTIES INSTALL_RPATH "$ORIGIN/..;$ORIGIN")
+set_target_properties(_hpmc PROPERTIES INSTALL_RPATH "\$ORIGIN/..;\$ORIGIN/../jit;\$ORIGIN")
 endif()
 
 if(ENABLE_HIP)
@@ -208,7 +208,6 @@ target_link_libraries(_hpmc PUBLIC CUDA::cusparse )
 endif()
 
 if (BUILD_JIT)
-target_compile_definitions(_hpmc PUBLIC ENABLE_JIT)
 target_link_libraries(_hpmc PUBLIC HOOMD::_jit)
 endif()
 
