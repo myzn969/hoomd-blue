@@ -20,6 +20,7 @@
 #endif
 
 #include <hoomd/extern/random123/include/Random123/philox.h>
+#include <type_traits>
 
 namespace r123 {
 // from random123/examples/uniform.hpp

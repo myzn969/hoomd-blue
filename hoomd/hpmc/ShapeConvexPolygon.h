@@ -370,7 +370,9 @@ DEVICE inline bool is_outside(const poly2d_verts& verts, const vec2<OverlapReal>
     // check if n dot (v[i]-p) < 0
     // distribute: (n dot v[i] - n dot p) < 0
     OverlapReal ndotp = dot(n,p);
+    #ifndef __CUDACC_RTC__
     #pragma unroll 3
+    #endif
     for (unsigned int i = 0; i < verts.N; i++)
         {
         if ((dot(n,vec2<OverlapReal>(verts.x[i], verts.y[i])) - ndotp) <= OverlapReal(0.0))

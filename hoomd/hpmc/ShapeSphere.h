@@ -12,9 +12,10 @@
 
 #include "Moves.h"
 
+#ifndef __HIP_DEVICE_COMPILE__
 #include <sstream>
-
 #include <stdexcept>
+#endif
 
 #ifndef __SHAPE_SPHERE_H__
 #define __SHAPE_SPHERE_H__
@@ -41,6 +42,7 @@ namespace hpmc
 //! Base class for parameter structure data types
 struct param_base
     {
+    #ifndef __HIP_DEVICE_COMPILE__
     //! Custom new operator
     static void* operator new(std::size_t sz)
         {
@@ -78,6 +80,7 @@ struct param_base
         {
         free(ptr);
         }
+    #endif
 
     //! Load dynamic data members into shared memory and increase pointer
     /*! \param ptr Pointer to load data to (will be incremented)
