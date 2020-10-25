@@ -3704,7 +3704,6 @@ template < class Shape > void export_IntegratorHPMCMono(pybind11::module& m, con
           .def("setParam", &IntegratorHPMCMono<Shape>::setParam)
           .def("setOverlapChecks", &IntegratorHPMCMono<Shape>::setOverlapChecks)
           .def("setExternalField", &IntegratorHPMCMono<Shape>::setExternalField)
-          .def("setPatchEnergy", &IntegratorHPMCMono<Shape>::setPatchEnergy)
           .def("mapOverlaps", &IntegratorHPMCMono<Shape>::PyMapOverlaps)
           .def("mapEnergies", &IntegratorHPMCMono<Shape>::PyMapEnergies)
           .def("connectGSDStateSignal", &IntegratorHPMCMono<Shape>::connectGSDStateSignal)
