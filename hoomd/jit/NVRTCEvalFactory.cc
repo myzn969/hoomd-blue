@@ -26,7 +26,7 @@ void NVRTCEvalFactory::compileGPU(
     {
     #if __HIP_PLATFORM_NVCC__
     std::vector<std::string> compile_options = {
-        "--std=c++11",
+        "--std=c++14",
 #ifdef ENABLE_HPMC_MIXED_PRECISION
         "-DENABLE_HPMC_MIXED_PRECISION",
 #endif
