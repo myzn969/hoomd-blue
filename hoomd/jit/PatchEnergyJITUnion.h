@@ -133,6 +133,18 @@ class PatchEnergyJITUnion : public PatchEnergyJIT
             return pybind11::array(self_cpp->m_alpha_size_union, self_cpp->m_factory_union->getAlphaUnionArray(), self);
             }
 
+        //! Return the alpha array
+        const float *getAlphaUnion() const
+            {
+            return &this->m_alpha_union.front();
+            }
+
+        //! Return the cut-off value
+        float getRcutUnion() const
+            {
+            return m_rcut_union;
+            }
+
     protected:
         std::shared_ptr<SystemDefinition> m_sysdef;               // HOOMD's system definition
         std::vector<hpmc::detail::GPUTree> m_tree;                // The tree acceleration structure per particle type

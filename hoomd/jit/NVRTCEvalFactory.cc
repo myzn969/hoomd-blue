@@ -19,6 +19,8 @@
 #include <nvrtc.h>
 #endif
 
+namespace jit {
+
 void NVRTCEvalFactory::compileGPU(
     const std::string& code,
     const std::string& kernel_name,
@@ -67,4 +69,6 @@ void NVRTCEvalFactory::compileGPU(
         }
     #endif
     }
+
+} // end namespace jit
 #endif

@@ -24,22 +24,6 @@ class PYBIND11_EXPORT PatchEnergyJITGPU : public PatchEnergyJIT
             m_eval_code = code;
             }
 
-        #ifdef __HIP_PLATFORM_NVCC__
-        //! Set up the GPU kernel
-        /*! \param kernel The jit kernel factory
-         */
-        template<class T>
-        void setupGPUKernel(NVRTCEvalFactory& kernel)
-            {
-            if (m_need_to_initialize)
-                {
-                kernel.setAlphaPtr<T>(&this->m_alpha.front());
-                }
-
-            m_need_to_initialize = false;
-            }
-        #endif
-
         //! Return the list of options passed to the RTC
         std::vector<std::string> getCompilerOptions() const
             {
@@ -57,7 +41,6 @@ class PYBIND11_EXPORT PatchEnergyJITGPU : public PatchEnergyJIT
     private:
         std::string m_eval_code;                    //!< Code snippet for evaluator function
         std::vector<std::string> m_options;         //!< List of compiler flags
-        bool m_need_to_initialize = true;           //!< True if we need to set up pointers
     };
 
 void export_PatchEnergyJITGPU(pybind11::module &m);

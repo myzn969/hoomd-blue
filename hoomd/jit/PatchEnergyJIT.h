@@ -77,6 +77,12 @@ class PYBIND11_EXPORT PatchEnergyJIT : public hpmc::PatchEnergy
             return m_eval(r_ij, type_i, q_i, d_i, charge_i, type_j, q_j, d_j, charge_j);
             }
 
+        //! Return the alpha array
+        const float *getAlpha() const
+            {
+            return &this->m_alpha.front();
+            }
+
         static pybind11::object getAlphaNP(pybind11::object self)
             {
             auto self_cpp = self.cast<PatchEnergyJIT *>();

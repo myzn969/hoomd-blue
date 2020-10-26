@@ -54,30 +54,10 @@ class PYBIND11_EXPORT PatchEnergyJITUnionGPU : public PatchEnergyJITUnion
             PatchEnergyJITUnion::slotNumTypesChange();
             unsigned int ntypes = this->m_sysdef->getParticleData()->getNTypes();
             m_d_union_params.resize(ntypes);
-            m_need_to_initialize = true;
             }
-
-        #ifdef __HIP_PLATFORM_NVCC__
-        //! Set up the GPU kernel
-        /*! \param kernel The jit kernel factory
-         */
-        template<class T>
-        void setupGPUKernel(NVRTCEvalFactory& kernel)
-            {
-            if (m_need_to_initialize)
-                {
-                kernel.setAlphaPtr<T>(&this->m_alpha.front());
-                kernel.setAlphaUnionPtr<T>(&this->m_alpha_union.front());
-                kernel.setUnionParamsPtr<T>(&this->m_d_union_params.front());
-                kernel.setRCutUnion<T>(this->m_rcut_union);
-                }
-
-            m_need_to_initialize = false;
-            }
-        #endif
 
         //! Return the per-type parameters
-        const std::vector<jit::union_params_t, managed_allocator<jit::union_params_t> >& getDeviceParams() const
+        auto& getDeviceParams() const
             {
             return m_d_union_params;
             }

@@ -126,12 +126,21 @@ template<class Shape>
 class JITNarrowPhase
     {
     public:
-        JITNarrowPhase() = default;
+        JITNarrowPhase(std::shared_ptr<const ExecutionConfiguration>& exec_conf)
+            {
+            #ifdef __HIP_PLATFORM_NVCC__
+            for (unsigned int i = 32; i <= (unsigned int) exec_conf->dev_prop.maxThreadsPerBlock; i *= 2)
+               m_launch_bounds.push_back(i);
+            #endif
+            }
 
         //! Launch the kernel
         /*! \params args Kernel arguments
          */
         virtual void operator()(const hpmc_patch_args_t& args) = 0;
+
+    protected:
+        std::vector<unsigned int> m_launch_bounds; // predefined kernel launchb bounds
     };
 
 template<class Shape, class JIT>
@@ -151,14 +160,12 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITGPU> : public JITNarrowPhase<Shape
 
         JITNarrowPhaseImpl(std::shared_ptr<const ExecutionConfiguration>& exec_conf,
                        std::shared_ptr<JIT> jit)
-            : m_exec_conf(exec_conf),
+            : JITNarrowPhase<Shape>(exec_conf), m_exec_conf(exec_conf),
               m_kernel(exec_conf, kernel_code, kernel_name, jit)
             { }
 
         virtual void operator()(const hpmc_patch_args_t& args)
             {
-            m_kernel.setup<Shape>();
-
             #ifdef __HIP_PLATFORM_NVCC__
             assert(args.d_postype);
             assert(args.d_orientation);
@@ -167,9 +174,8 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITGPU> : public JITNarrowPhase<Shape
             unsigned int req_tpp = args.tpp;
             unsigned int eval_threads = args.eval_threads;
 
-            auto& launch_bounds = m_kernel.getFactory().getLaunchBounds();
             unsigned int bounds = 0;
-            for (auto b: launch_bounds)
+            for (auto b: this->m_launch_bounds)
                 {
                 if (b >= block_size)
                     {
@@ -178,8 +184,11 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITGPU> : public JITNarrowPhase<Shape
                     }
                 }
 
+            m_kernel.setup<Shape>(args.stream, eval_threads, bounds);
+
             // choose a block size based on the max block size by regs (max_block_size) and include dynamic shared memory usage
-            unsigned int run_block_size = std::min(block_size, m_kernel.getFactory().getKernelMaxThreads<Shape>(0, eval_threads, bounds)); // fixme GPU 0
+            unsigned int run_block_size = std::min(block_size,
+                m_kernel.getFactory().getKernelMaxThreads<Shape>(0, eval_threads, bounds)); // fixme GPU 0
 
             unsigned int tpp = std::min(req_tpp,run_block_size);
             while (eval_threads*tpp > run_block_size || run_block_size % (eval_threads*tpp) != 0)
@@ -202,7 +211,8 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITGPU> : public JITNarrowPhase<Shape
             if (min_shared_bytes >= devprop.sharedMemPerBlock)
                 throw std::runtime_error("Insufficient shared memory for HPMC kernel: reduce number of particle types or size of shape parameters");
 
-            unsigned int kernel_shared_bytes = m_kernel.getFactory().getKernelSharedSize<Shape>(0, eval_threads, bounds); //fixme GPU 0
+            unsigned int kernel_shared_bytes = m_kernel.getFactory()
+                .getKernelSharedSize<Shape>(0, eval_threads, bounds); //fixme GPU 0
             while (shared_bytes + kernel_shared_bytes >= devprop.sharedMemPerBlock)
                 {
                 run_block_size -= devprop.warpSize;
@@ -242,7 +252,9 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITGPU> : public JITNarrowPhase<Shape
                 unsigned int N_old = args.N + args.N_ghost;
 
                 // configure the kernel
-                auto launcher = m_kernel.getFactory().configureKernel<Shape>(idev, grid, thread, shared_bytes, args.stream, eval_threads, bounds);
+                auto launcher = m_kernel.getFactory()
+                    .configureKernel<Shape>(idev, grid, thread, shared_bytes, args.stream,
+                        eval_threads, bounds);
 
                 CUresult res = launcher(args.d_postype,
                     args.d_orientation,
@@ -306,15 +318,13 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
 
         JITNarrowPhaseImpl(std::shared_ptr<const ExecutionConfiguration>& exec_conf,
                        std::shared_ptr<JIT> jit)
-            : m_exec_conf(exec_conf),
+            : JITNarrowPhase<Shape>(exec_conf), m_exec_conf(exec_conf),
               m_kernel(exec_conf, kernel_code, kernel_name, jit)
             { }
 
         //! Launch the kernel
         virtual void operator()(const hpmc_patch_args_t& args)
             {
-            m_kernel.setup<Shape>();
-
             #ifdef __HIP_PLATFORM_NVCC__
             assert(args.d_postype);
             assert(args.d_orientation);
@@ -323,9 +333,8 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
             unsigned int req_tpp = args.tpp;
             unsigned int eval_threads = args.eval_threads;
 
-            auto& launch_bounds = m_kernel.getFactory().getLaunchBounds();
             unsigned int bounds = 0;
-            for (auto b: launch_bounds)
+            for (auto b: this->m_launch_bounds)
                 {
                 if (b >= block_size)
                     {
@@ -335,7 +344,8 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
                 }
             const unsigned int *d_type_params = args.d_tuner_params+1;
 
-            // choose a block size based on the max block size by regs (max_block_size) and include dynamic shared memory usage
+            m_kernel.setup<Shape>(args.stream, eval_threads, bounds);
+
             unsigned int run_block_size = std::min(block_size,
                 m_kernel.getFactory().getKernelMaxThreads<Shape>(0, eval_threads, bounds)); // fixme GPU 0
 
@@ -351,7 +361,7 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
             unsigned int max_queue_size = n_groups*tpp;
 
             const unsigned int min_shared_bytes = args.num_types * sizeof(Scalar) +
-                                                  m_kernel.getJIT()->getDeviceParams().size()*sizeof(jit::union_params_t);
+                m_kernel.getJIT()->getDeviceParams().size()*sizeof(jit::union_params_t);
 
             unsigned int shared_bytes = n_groups * (4*sizeof(unsigned int) + 2*sizeof(Scalar4) + 2*sizeof(Scalar3) + 2*sizeof(Scalar))
                 + max_queue_size * 2 * sizeof(unsigned int)
@@ -360,7 +370,8 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
             if (min_shared_bytes >= devprop.sharedMemPerBlock)
                 throw std::runtime_error("Insufficient shared memory for HPMC kernel: reduce number of particle types or size of shape parameters");
 
-            unsigned int kernel_shared_bytes = m_kernel.getFactory().getKernelSharedSize<Shape>(0, eval_threads, bounds); //fixme GPU 0
+            unsigned int kernel_shared_bytes = m_kernel.getFactory()
+                .getKernelSharedSize<Shape>(0, eval_threads, bounds); //fixme GPU 0
             while (shared_bytes + kernel_shared_bytes >= devprop.sharedMemPerBlock)
                 {
                 run_block_size -= devprop.warpSize;
@@ -412,7 +423,9 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
                 unsigned int N_old = args.N + args.N_ghost;
 
                 // configure the kernel
-                auto launcher = m_kernel.getFactory().configureKernel<Shape>(idev, grid, thread, shared_bytes, args.stream, eval_threads, bounds);
+                auto launcher = m_kernel.getFactory()
+                    .configureKernel<Shape>(idev, grid, thread, shared_bytes, args.stream,
+                        eval_threads, bounds);
 
                 CUresult res = launcher(args.d_postype,
                     args.d_orientation,
