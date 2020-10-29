@@ -658,8 +658,6 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                                 d_charge[check_j]);
                             }
                         }
-
-                    energy = hoomd::detail::WarpScan<float, eval_threads>().Broadcast(energy, 0);
                     }
 
                 if (threadIdx.x == 0 && (overlap_j || within_rcut))
