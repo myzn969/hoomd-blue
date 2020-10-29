@@ -734,7 +734,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                         {
                         // store neighbor information
                         d_deltaF_nor_nlist[overlap_k*max_len_deltaF + n + m] = overlap_m_flag;
-                        d_deltaF_nor_energy[overlap_k*max_len_deltaF + n + m] = s_energy_list[group*max_len+k];
+                        d_deltaF_nor_energy[overlap_k*max_len_deltaF + n + m] = s_energy_list[group*max_len+m];
                         }
                     }
                 }
