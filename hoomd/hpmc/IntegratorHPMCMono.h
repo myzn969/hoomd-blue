@@ -1938,25 +1938,17 @@ void IntegratorHPMCMono<Shape>::updateCellWidth()
 
     for (unsigned int type_i = 0; type_i < this->m_pdata->getNTypes(); ++type_i)
         {
-        for (unsigned int type_j = 0; type_j < this->m_pdata->getNTypes(); ++type_j)
+        quat<Scalar> o;
+        Shape tmp_i(o, this->m_params[type_i]);
+        if (m_fugacity[m_depletant_idx(type_i,type_i)] != Scalar(0.0))
             {
-            quat<Scalar> o;
-            Shape tmp_i(o, this->m_params[type_i]);
-            if (m_fugacity[m_depletant_idx(type_i,type_j)] != Scalar(0.0))
-                {
-                // add range of depletion interaction
-                Shape tmp_j(o, this->m_params[type_j]);
-                max_d = std::max(max_d, (Scalar) 0.5*(tmp_i.getCircumsphereDiameter() +
-                    tmp_j.getCircumsphereDiameter()));
-                }
+            // compute range of depletion interaction
+            Shape tmp_j(o, this->m_params[type_i]);
+            max_d = std::max(max_d, (Scalar) tmp_i.getCircumsphereDiameter());
             }
         }
 
-    // extend the image list by the depletant diameter, since we're querying
-    // AABBs that are larger than the shape diameters themselves
-    this->m_extra_image_width = max_d;
-
-    this->m_nominal_width += this->m_extra_image_width;
+    this->m_nominal_width += max_d;
 
     // Account for patch width
     if (this->m_patch)
@@ -1964,11 +1956,27 @@ void IntegratorHPMCMono<Shape>::updateCellWidth()
         Scalar max_extent = 0.0;
         for (unsigned int typ = 0; typ < this->m_pdata->getNTypes(); typ++)
             {
-            max_extent = std::max(max_extent, this->m_patch->getAdditiveCutoff(typ));
+            for (unsigned int typ_d = 0; typ_d < this->m_pdata->getNTypes(); ++typ_d)
+                {
+                Scalar d_dep = 0.0;
+                if (m_fugacity[m_depletant_idx(typ_d,typ_d)] != Scalar(0.0))
+                    {
+                    d_dep = this->m_patch->getAdditiveCutoff(typ) +
+                            this->m_patch->getAdditiveCutoff(typ_d) +
+                            2*this->m_patch->getRCut();
+                    max_d = std::max(max_d, d_dep);
+                    }
+                max_extent = std::max(max_extent, this->m_patch->getAdditiveCutoff(typ) + d_dep);
+                }
             }
 
         this->m_nominal_width = std::max(this->m_nominal_width, this->m_patch->getRCut() + max_extent);
         }
+
+    // extend the image list by the depletant diameter, since we're querying
+    // AABBs that are larger than the shape diameters themselves
+    this->m_extra_image_width = max_d;
+
     this->m_image_list_valid = false;
     this->m_aabb_tree_invalid = true;
 
@@ -2928,12 +2936,6 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             }
                         }
 
-                    if (!overlap_i && !this->m_patch)
-                        {
-                        // reject because we can't insert in overlap volume
-                        continue;
-                        }
-
                     // Mayer f-function
                     Scalar f_i = 0.0;
 
@@ -2959,6 +2961,12 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                                                       0.0);
                             f_i = 1.0-std::exp(-U);
                             }
+                        }
+
+                    if (!overlap_i && f_i == 0)
+                        {
+                        // reject because we can't insert in overlap volume
+                        continue;
                         }
 
                     // check overlap with neighbors

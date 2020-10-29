@@ -136,12 +136,14 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_deltaF_or_nneigh,
                  const unsigned int *d_deltaF_or_len,
                  const unsigned int *d_deltaF_or_nlist,
+                 const float *d_deltaF_or_energy,
                  const Scalar *d_deltaF_or,
                  const unsigned maxn_deltaF_or,
                  const unsigned int *d_deltaF_nor_nneigh,
                  const unsigned int *d_deltaF_nor_len,
                  const unsigned int *d_deltaF_nor_k,
                  const unsigned int *d_deltaF_nor_nlist,
+                 const float *d_deltaF_nor_energy,
                  const Scalar *d_deltaF_nor,
                  Scalar *d_F,
                  const unsigned int maxn_deltaF_nor,
@@ -295,13 +297,14 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 {
                 nterms = d_deltaF_or_len[maxn_deltaF_or*i + cur_neigh];
 
-                bool logical_or = false; // the empty disjunction is false
+                bool has_overlap = false;
+                float U_j = 0.0;
                 for (unsigned int cur_term = cur_neigh; cur_term < cur_neigh + nterms; ++cur_term)
                     {
                     unsigned int j_flag = d_deltaF_or_nlist[maxn_deltaF_or*i + cur_term];
 
-                    unsigned int j = j_flag >> 1;
-                    bool old = j_flag & 1;
+                    unsigned int j = j_flag >> 2;
+                    bool old = j_flag & 2;
 
                     // has j been updated? ghost particles are not updated
                     bool j_has_been_updated = j < N && d_trial_move_type[j]
@@ -309,14 +312,21 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
 
                     if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
                         {
-                        logical_or = true;
-                        break;
+                        if (j_flag & 1)
+                            {
+                            // shortcut
+                            has_overlap = true;
+                            break;
+                            }
+                        U_j += d_deltaF_or_energy[maxn_deltaF_or*i + cur_term];
                         }
                     }
 
-                if (logical_or)
+                float f_j = has_overlap + (1-has_overlap)*(1.0-fast::exp(-U_j));
+                if (f_j != 0.0)
                     {
-                    atomicAdd(&s_deltaF[group], d_deltaF_or[maxn_deltaF_or*i + cur_neigh]);
+                    float f_i = d_deltaF_or[maxn_deltaF_or*i + cur_neigh];
+                    atomicAdd(&s_deltaF[group], signbit(f_i*f_j)*logf(1+fabsf(f_i*f_j)));
                     }
                 } // end loop over terms
 
@@ -327,8 +337,9 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 nterms = d_deltaF_nor_len[maxn_deltaF_nor*i + cur_neigh];
                 unsigned int k_flag = d_deltaF_nor_k[maxn_deltaF_nor*i + cur_neigh];
 
-                unsigned int k = k_flag >> 1;
-                unsigned int k_old = k_flag & 1;
+                unsigned int k = k_flag >> 2;
+                bool k_old = k_flag & 2;
+                bool i_old = k_flag & 1;
 
                 // has the inserting particle k been updated? ghost particles are not updated
                 bool k_has_been_updated = k < N && d_trial_move_type[k]
@@ -337,31 +348,62 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 if ((k_old && k_has_been_updated) || (!k_old && !k_has_been_updated))
                     continue;
 
-                bool logical_nor = true; // the empty NOR disjunction is true
+                bool has_overlap = false;
+                bool has_overlap_other = false;
+                float U_j = 0.0;
+                float U_j_other = 0.0;
+                unsigned int n_self = 0;
                 for (unsigned int cur_term = cur_neigh; cur_term < cur_neigh + nterms; ++cur_term)
                     {
                     unsigned int j_flag = d_deltaF_nor_nlist[maxn_deltaF_nor*i + cur_term];
 
-                    unsigned int j = j_flag >> 1;
-                    bool old = j_flag & 1;
+                    unsigned int j = j_flag >> 2;
+                    bool j_old = j_flag & 2;
 
                     if (j == i)
-                        continue;
+                        {
+                        n_self++;
+
+                        if (i_old != j_old)
+                            continue;
+                        }
 
                     // has j been updated? ghost particles are not updated
                     bool j_has_been_updated = j < N && d_trial_move_type[j]
                         && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
 
-                    if ((old && !j_has_been_updated) || (!old && j_has_been_updated))
+                    if ((j_old && !j_has_been_updated) || (!j_old && j_has_been_updated))
                         {
-                        logical_nor = false;
-                        break;
+                        if (j_flag & 1)
+                            {
+                            has_overlap = false;
+
+                            if (j != i)
+                                {
+                                has_overlap_other = false;
+                                break; // shortcut
+                                }
+                            }
+
+                        float t = d_deltaF_nor_energy[maxn_deltaF_nor*i + cur_term];
+                        U_j += t;
+                        if (j != i)
+                            U_j_other += t;
                         }
                     }
 
-                if (logical_nor)
+                float f_j = has_overlap + (1-has_overlap)*(1.0-fast::exp(-U_j));
+                float f_k = d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh];
+                if (f_j != 0.0)
                     {
-                    atomicAdd(&s_deltaF[group], d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh]);
+                    atomicAdd(&s_deltaF[group], signbit(f_k*f_j)*logf(1+fabsf(f_k*f_j)));
+                    }
+
+                if (n_self < 2)
+                    {
+                    // need to add back neighbor term in other the configuration on the opposite side of the fraction
+                    float f_j_other = has_overlap_other + (1-has_overlap_other)*(1.0-fast::exp(-U_j_other));
+                    atomicAdd(&s_deltaF[group], signbit(-f_k*f_j_other)*logf(1+fabsf(f_k*f_j_other)));
                     }
                 } // end loop over terms
             } // end depletants
@@ -552,12 +594,14 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_deltaF_or_nneigh,
                  const unsigned int *d_deltaF_or_len,
                  const unsigned int *d_deltaF_or_nlist,
+                 const float *d_deltaF_or_energy,
                  const Scalar *d_deltaF_or,
                  const unsigned maxn_deltaF_or,
                  const unsigned int *d_deltaF_nor_nneigh,
                  const unsigned int *d_deltaF_nor_len,
                  const unsigned int *d_deltaF_nor_k,
                  const unsigned int *d_deltaF_nor_nlist,
+                 const float *d_deltaF_nor_energy,
                  const Scalar *d_deltaF_nor,
                  Scalar *d_F,
                  const unsigned int maxn_deltaF_nor,
@@ -618,12 +662,14 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
             d_deltaF_or_nneigh,
             d_deltaF_or_len,
             d_deltaF_or_nlist,
+            d_deltaF_or_energy,
             d_deltaF_or,
             maxn_deltaF_or,
             d_deltaF_nor_nneigh,
             d_deltaF_nor_len,
             d_deltaF_nor_k,
             d_deltaF_nor_nlist,
+            d_deltaF_nor_energy,
             d_deltaF_nor,
             d_F,
             maxn_deltaF_nor,

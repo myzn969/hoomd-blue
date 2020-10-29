@@ -73,9 +73,10 @@ class JITKernel<PatchEnergyJITGPU> : public JITKernelBase<PatchEnergyJITGPU>
             { }
 
         template<typename... TArgs, typename... Args>
-        void setup(hipStream_t stream, Args&&... args)
+        void setup(unsigned int idev, hipStream_t stream, Args&&... args)
             {
-            this->m_factory.setGlobalVariable<TArgs...>("alpha_iso",
+            this->m_factory.setGlobalVariable<TArgs...>(idev,
+                "alpha_iso",
                 this->m_jit->getAlpha(), stream,
                 std::forward<Args>(args)...);
             }
@@ -95,21 +96,25 @@ class JITKernel<PatchEnergyJITUnionGPU> : public JITKernelBase<PatchEnergyJITUni
             { }
 
         template<typename... TArgs, typename... Args>
-        void setup(hipStream_t stream, Args&&... args)
+        void setup(unsigned int idev, hipStream_t stream, Args&&... args)
             {
-            this->m_factory.setGlobalVariable<TArgs...>("alpha_iso",
+            this->m_factory.setGlobalVariable<TArgs...>(idev,
+                "alpha_iso",
                 this->m_jit->getAlpha(), stream,
                 std::forward<Args>(args)...);
 
-            this->m_factory.setGlobalVariable<TArgs...>("alpha_union",
+            this->m_factory.setGlobalVariable<TArgs...>(idev,
+                "alpha_union",
                 this->m_jit->getAlphaUnion(), stream,
                 std::forward<Args>(args)...);
 
-            this->m_factory.setGlobalVariable<TArgs...>("jit::d_union_params",
+            this->m_factory.setGlobalVariable<TArgs...>(idev,
+                "jit::d_union_params",
                 &this->m_jit->getDeviceParams().front(), stream,
                 std::forward<Args>(args)...);
 
-            this->m_factory.setGlobalVariable<TArgs...>("jit::d_rcut_union",
+            this->m_factory.setGlobalVariable<TArgs...>(idev,
+                "jit::d_rcut_union",
                 this->m_jit->getRcutUnion(), stream,
                 std::forward<Args>(args)...);
             }

@@ -2,6 +2,7 @@
 
 #include "hoomd/VectorMath.h"
 
+#ifdef __HIPCC__
 //! Declaration of evaluator function
 __device__ float eval(const vec3<float>& r_ij,
     unsigned int type_i,
@@ -23,3 +24,4 @@ typedef float (*eval_func)(const vec3<float>& r_ij,
     const quat<float>& orientation_j,
     const float diameter_j,
     const float charge_j);
+#endif

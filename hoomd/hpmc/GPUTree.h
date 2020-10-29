@@ -311,36 +311,32 @@ class GPUTree
                                     const unsigned int mask) const
             {
             if (mask & 1)
+                {
                 m_center.load_shared(ptr, available_bytes);
-            if (mask & 2)
                 m_lengths.load_shared(ptr, available_bytes);
-            if (mask & 4)
                 m_rotation.load_shared(ptr, available_bytes);
-            if (mask & 8)
                 m_mask.load_shared(ptr, available_bytes);
-            if (mask & 16)
                 m_is_sphere.load_shared(ptr, available_bytes);
+                }
 
-            if (mask & 32)
+            if (mask & 2)
+                {
                 m_left.load_shared(ptr, available_bytes);
-            if (mask & 64)
                 m_escape.load_shared(ptr, available_bytes);
-            if (mask & 128)
                 m_ancestors.load_shared(ptr, available_bytes);
+                }
 
-            if (mask & 256)
+            if (mask & 4)
+                {
                 m_leaf_ptr.load_shared(ptr, available_bytes);
-
-            if (mask & 512)
                 m_leaf_obb_ptr.load_shared(ptr, available_bytes);
-
-            if (mask & 1024)
                 m_particles.load_shared(ptr, available_bytes);
+                }
             }
 
         HOSTDEVICE static inline unsigned int getTuningBits()
             {
-            return 11;
+            return 3;
             }
 
         //! Get the capacity of leaf nodes

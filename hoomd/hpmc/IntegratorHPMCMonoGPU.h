@@ -10,6 +10,8 @@
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsTypes.cuh"
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh"
 #include "hoomd/hpmc/IntegratorHPMCMonoGPUJIT.h"
+#include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase1JIT.h"
+#include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase2JIT.h"
 
 #include "hoomd/Autotuner.h"
 #include "hoomd/GlobalArray.h"
@@ -195,6 +197,12 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
                 {
                 m_tuner_narrow_patch->setPeriod(chain_length*period*this->m_nselect);
                 m_tuner_narrow_patch->setEnabled(enable);
+
+                m_tuner_jit_phase1->setPeriod(chain_length*period*this->m_nselect);
+                m_tuner_jit_phase1->setEnabled(enable);
+
+                m_tuner_jit_phase2->setPeriod(chain_length*period*this->m_nselect);
+                m_tuner_jit_phase2->setEnabled(enable);
                 }
             }
 
@@ -208,6 +216,8 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
             if (this->m_patch && !this->m_patch_log)
                 {
                 l.push_back(m_tuner_narrow_patch);
+                l.push_back(m_tuner_jit_phase1);
+                l.push_back(m_tuner_jit_phase2);
                 }
             l.push_back(m_tuner_depletants);
             l.push_back(m_tuner_excell_block_size);
@@ -252,6 +262,9 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
             IntegratorHPMCMono<Shape>::setPatchEnergy(patch);
 
             m_jit_narrow = std::make_unique<gpu::JITNarrowPhaseImpl<Shape, JIT> >(this->m_exec_conf, patch);
+
+            m_jit_phase1 = std::make_unique<gpu::JITDepletantsAuxiliaryPhase1Impl<Shape, JIT> >(this->m_exec_conf, patch);
+            m_jit_phase2 = std::make_unique<gpu::JITDepletantsAuxiliaryPhase2Impl<Shape, JIT> >(this->m_exec_conf, patch);
             }
 
     protected:
@@ -275,8 +288,12 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         std::shared_ptr<Autotuner> m_tuner_depletants_phase1;//!< Tuner for depletants with ntrial, phase 1 kernel
         std::shared_ptr<Autotuner> m_tuner_depletants_phase2;//!< Tuner for depletants with ntrial, phase 2 kernel
         std::shared_ptr<Autotuner> m_tuner_narrow_patch;     //!< Tuner for patch interactions
+        std::shared_ptr<Autotuner> m_tuner_jit_phase1;       //!< Depletants kerne (phase 1) w/patch interactions
+        std::shared_ptr<Autotuner> m_tuner_jit_phase2;       //!< Depletants kerne (phase 2) w/patch interactions
 
         std::unique_ptr<gpu::JITNarrowPhase<Shape> > m_jit_narrow; //!< Energy kernel for patch interactions
+        std::unique_ptr<gpu::JITDepletantsAuxiliaryPhase1<Shape> > m_jit_phase1; //!< Depletants kernel with patch interaction (phase 1)
+        std::unique_ptr<gpu::JITDepletantsAuxiliaryPhase2<Shape> > m_jit_phase2; //!< Depletants kernel with patch interaction (phase 2)
 
         GlobalArray<Scalar4> m_trial_postype;                 //!< New positions (and type) of particles
         GlobalArray<Scalar4> m_trial_orientation;             //!< New orientations
@@ -294,6 +311,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<unsigned int> m_deltaF_or_nneigh;         //!< Max number of neighbors for logical or
         GlobalArray<unsigned int> m_deltaF_or_nlist;          //!< Neighbor list for logical or
         GlobalArray<unsigned int> m_deltaF_or_len;            //!< Length of every logical or term
+        GlobalArray<float> m_deltaF_or_energy;                //!< Energy contribution of neighbor particle
         GlobalArray<Scalar> m_deltaF_or;                      //!< Free energy contributions for logical or
         unsigned int m_deltaF_or_maxlen;                      //!< Maximum number of neighbors for logical or
         GlobalArray<unsigned int> m_overflow_or;              //!< Overflow condition for logical OR
@@ -301,6 +319,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<unsigned int> m_deltaF_nor_nlist;         //!< Neighbor list for logical nor
         GlobalArray<unsigned int> m_deltaF_nor_len;           //!< Length of every logical nor term
         GlobalArray<unsigned int> m_deltaF_nor_k;             //!< Identity of the inserting particle (in phase 2)
+        GlobalArray<float> m_deltaF_nor_energy;               //!< Energy contribution of neighbor particle
         GlobalArray<Scalar> m_deltaF_nor;                     //!< Free energy contributions for logical nor
         unsigned int m_deltaF_nor_maxlen;                     //!< Maximum number of neighbors for logical nor
         GlobalArray<unsigned int> m_overflow_nor;             //!< Overflow condition for logical NOR
@@ -329,6 +348,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<hpmc_implicit_counters_t> m_implicit_counters;  //!< Per-device counters for depletants
 
         std::vector<hipStream_t> m_narrow_phase_streams;             //!< Stream for narrow phase kernel, per device
+        std::vector<hipStream_t> m_patch_streams;                    //!< Stream for patch interactions kernel, per device
         std::vector<std::vector<hipStream_t> > m_depletant_streams;  //!< Stream for every particle type, and device
         std::vector<std::vector<hipStream_t> > m_depletant_streams_phase1;  //!< Streams for phase1 kernel
         std::vector<std::vector<hipStream_t> > m_depletant_streams_phase2;  //!< Streams for phase2 kernel
@@ -480,6 +500,31 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
 
     m_tuner_narrow_patch = std::shared_ptr<Autotuner>(new Autotuner(valid_params_patch, 5, 100000, "hpmc_narrow_patch", this->m_exec_conf));
 
+    // tuning parameters for depletants w/patch interactions
+    std::vector<std::vector<unsigned int> > valid_params_depletants_jit(2+this->m_pdata->getNTypes());
+    for (unsigned int depletants_per_thread=1; depletants_per_thread <= 32; depletants_per_thread*=2)
+        valid_params_depletants_jit[0].push_back(depletants_per_thread);
+
+    for (unsigned int block_size = dev_prop.warpSize; block_size <= (unsigned int) dev_prop.maxThreadsPerBlock; block_size += dev_prop.warpSize)
+        {
+        for (unsigned int group_size=1; group_size <= narrow_phase_max_tpp; group_size*=2)
+            {
+            for (unsigned int eval_threads=1; eval_threads <= narrow_phase_max_threads_per_eval; eval_threads *= 2)
+                {
+                if ((block_size % (group_size*eval_threads)) == 0)
+                    valid_params_depletants_jit[1].push_back(block_size*1000000 + group_size*100 + eval_threads);
+                }
+            }
+        }
+    tuning_bits = Shape::getTuningBits() + jit::union_params_t::getTuningBits();
+    for (unsigned int itype = 0; itype < this->m_pdata->getNTypes(); ++itype)
+        {
+        for (int param = 0; param < (1<<tuning_bits); ++param)
+            valid_params_depletants_jit[2+itype].push_back(param);
+        }
+    m_tuner_jit_phase1 = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants_jit, 5, 100000, "hpmc_jit_phase1", this->m_exec_conf));
+    m_tuner_jit_phase2 = std::shared_ptr<Autotuner>(new Autotuner(valid_params_depletants_jit, 5, 100000, "hpmc_jit_phase2", this->m_exec_conf));
+
     // initialize memory
     GlobalArray<Scalar4>(1,this->m_exec_conf).swap(m_trial_postype);
     TAG_ALLOCATION(m_trial_postype);
@@ -511,6 +556,9 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_or_len);
     TAG_ALLOCATION(m_deltaF_or_len);
 
+    GlobalArray<float>(1, this->m_exec_conf).swap(m_deltaF_or_energy);
+    TAG_ALLOCATION(m_deltaF_or_energy);
+
     GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_deltaF_or);
     TAG_ALLOCATION(m_deltaF_or);
 
@@ -535,6 +583,9 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
 
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_nor_k);
     TAG_ALLOCATION(m_deltaF_nor_k);
+
+    GlobalArray<float>(1, this->m_exec_conf).swap(m_deltaF_nor_energy);
+    TAG_ALLOCATION(m_deltaF_nor_energy);
 
     GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_deltaF_nor);
     TAG_ALLOCATION(m_deltaF_nor);
@@ -682,6 +733,9 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
         hipSetDevice(this->m_exec_conf->getGPUIds()[idev]);
         hipStreamCreate(&m_narrow_phase_streams[idev]);
         }
+
+    // default stream
+    m_patch_streams.resize(this->m_exec_conf->getNumActiveGPUs(), 0);
 
     // Depletants
     unsigned int ntypes = this->m_pdata->getNTypes();
@@ -1250,6 +1304,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_deltaF_or_nneigh(m_deltaF_or_nneigh, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_deltaF_or_nlist(m_deltaF_or_nlist, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_deltaF_or_len(m_deltaF_or_len, access_location::device, access_mode::overwrite);
+                    ArrayHandle<float> d_deltaF_or_energy(m_deltaF_or_energy, access_location::device, access_mode::overwrite);
                     ArrayHandle<Scalar> d_deltaF_or(m_deltaF_or, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_overflow_or(m_overflow_or, access_location::device, access_mode::readwrite);
 
@@ -1257,10 +1312,15 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_deltaF_nor_nlist(m_deltaF_nor_nlist, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_deltaF_nor_len(m_deltaF_nor_len, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_deltaF_nor_k(m_deltaF_nor_k, access_location::device, access_mode::overwrite);
+                    ArrayHandle<float> d_deltaF_nor_energy(m_deltaF_nor_energy, access_location::device, access_mode::overwrite);
                     ArrayHandle<Scalar> d_deltaF_nor(m_deltaF_nor, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_overflow_nor(m_overflow_nor, access_location::device, access_mode::readwrite);
 
                     ArrayHandle<unsigned int> d_req_len(m_req_len, access_location::device, access_mode::readwrite);
+
+                    ArrayHandle<Scalar> d_charge(this->m_pdata->getCharges(), access_location::device, access_mode::read);
+                    ArrayHandle<Scalar> d_diameter(this->m_pdata->getDiameters(), access_location::device, access_mode::read);
+                    ArrayHandle<Scalar> d_additive_cutoff(m_additive_cutoff, access_location::device, access_mode::read);
 
                     // reset number of neighbors
                     for (int idev = this->m_exec_conf->getNumActiveGPUs() - 1; idev >= 0; --idev)
@@ -1375,6 +1435,11 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             unsigned int ntrial = h_ntrial.data[this->m_depletant_idx(itype,jtype)];
                             if (!ntrial)
                                 {
+                                if (this->m_patch)
+                                    {
+                                    throw std::runtime_error("Depletants with patchy interactions only supported with ntrial > 0.\n");
+                                    }
+
                                 // draw random number of depletant insertions per particle from Poisson distribution
                                 this->m_exec_conf->beginMultiGPU();
                                 m_tuner_num_depletants->begin();
@@ -1522,6 +1587,10 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     }
                                 #endif
 
+                                Scalar r_cut_patch(0.0);
+                                if (this->m_patch)
+                                    r_cut_patch = this->m_patch->getRCut();
+
                                 gpu::hpmc_auxiliary_args_t auxiliary_args(
                                     d_tag.data,
                                     d_vel.data,
@@ -1540,6 +1609,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     d_deltaF_or_nneigh.data,
                                     d_deltaF_or_nlist.data,
                                     d_deltaF_or_len.data,
+                                    d_deltaF_or_energy.data,
                                     d_deltaF_or.data,
                                     m_deltaF_or_maxlen,
                                     d_overflow_or.data,
@@ -1547,40 +1617,102 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     d_deltaF_nor_nlist.data,
                                     d_deltaF_nor_len.data,
                                     d_deltaF_nor_k.data,
+                                    d_deltaF_nor_energy.data,
                                     d_deltaF_nor.data,
                                     m_deltaF_nor_maxlen,
-                                    d_overflow_nor.data
+                                    d_overflow_nor.data,
+                                    r_cut_patch,
+                                    d_additive_cutoff.data,
+                                    1, // eval_threads
+                                    d_charge.data,
+                                    d_diameter.data
                                     );
 
                                 // phase 1, insert into excluded volume of particle i
-                                m_tuner_depletants_phase1->begin();
-                                args.d_type_params = m_tuner_depletants_phase1->getDeviceParams()+2;
-                                implicit_args.depletants_per_thread = m_tuner_depletants_phase1->getParam(0);
-                                unsigned int param = m_tuner_depletants_phase1->getParam(1);
-                                args.block_size = param/10000;
-                                args.tpp = param%10000;
-                                gpu::hpmc_depletants_auxiliary_phase1<Shape>(args,
-                                    implicit_args,
-                                    auxiliary_args,
-                                    params.data());
+                                if (m_jit_phase1)
+                                    {
+                                    m_tuner_jit_phase1->begin();
+                                    args.d_type_params = m_tuner_jit_phase1->getDeviceParams()+2;
+                                    implicit_args.depletants_per_thread = m_tuner_jit_phase1->getParam(0);
+                                    unsigned int param = m_tuner_jit_phase1->getParam(1);
+                                    args.block_size = param/1000000;
+                                    args.tpp = (param%1000000)/100;
+                                    auxiliary_args.eval_threads = param % 100;
+
+                                    m_jit_phase1->operator()(args,
+                                        implicit_args,
+                                        auxiliary_args,
+                                        params.data());
+                                    }
+                                else
+                                    {
+                                    m_tuner_depletants_phase1->begin();
+                                    args.d_type_params = m_tuner_depletants_phase1->getDeviceParams()+2;
+                                    implicit_args.depletants_per_thread = m_tuner_depletants_phase1->getParam(0);
+                                    unsigned int param = m_tuner_depletants_phase1->getParam(1);
+                                    args.block_size = param/10000;
+                                    args.tpp = param%10000;
+
+                                    gpu::hpmc_depletants_auxiliary_phase1<Shape>(args,
+                                        implicit_args,
+                                        auxiliary_args,
+                                        params.data());
+
+                                    }
+
                                 if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                                     CHECK_CUDA_ERROR();
-                                m_tuner_depletants_phase1->end();
+
+                                if (m_jit_phase1)
+                                    {
+                                    m_tuner_jit_phase1->end();
+                                    }
+                                else
+                                    {
+                                    m_tuner_depletants_phase1->end();
+                                    }
 
                                 // phase 2, reinsert into excluded volume of i's neighbors
-                                m_tuner_depletants_phase2->begin();
-                                args.d_type_params = m_tuner_depletants_phase2->getDeviceParams()+2;
-                                implicit_args.depletants_per_thread = m_tuner_depletants_phase2->getParam(0);
-                                param = m_tuner_depletants_phase2->getParam(1);
-                                args.block_size = param/10000;
-                                args.tpp = param%10000;
-                                gpu::hpmc_depletants_auxiliary_phase2<Shape>(args,
-                                    implicit_args,
-                                    auxiliary_args,
-                                    params.data());
+                                if (m_jit_phase2)
+                                    {
+                                    m_tuner_jit_phase2->begin();
+                                    args.d_type_params = m_tuner_jit_phase2->getDeviceParams()+2;
+                                    implicit_args.depletants_per_thread = m_tuner_jit_phase2->getParam(0);
+                                    unsigned int param = m_tuner_jit_phase2->getParam(1);
+                                    args.block_size = param/1000000;
+                                    args.tpp = (param%1000000)/100;
+                                    auxiliary_args.eval_threads = param % 100;
+
+                                    m_jit_phase2->operator()(args,
+                                        implicit_args,
+                                        auxiliary_args,
+                                        params.data());
+                                    }
+                                else
+                                    {
+                                    m_tuner_depletants_phase2->begin();
+                                    args.d_type_params = m_tuner_depletants_phase2->getDeviceParams()+2;
+                                    implicit_args.depletants_per_thread = m_tuner_depletants_phase2->getParam(0);
+                                    param = m_tuner_depletants_phase2->getParam(1);
+                                    args.block_size = param/10000;
+                                    args.tpp = param%10000;
+                                    gpu::hpmc_depletants_auxiliary_phase2<Shape>(args,
+                                        implicit_args,
+                                        auxiliary_args,
+                                        params.data());
+                                    }
+
                                 if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                                     CHECK_CUDA_ERROR();
-                                m_tuner_depletants_phase2->end();
+
+                                if (m_jit_phase2)
+                                    {
+                                    m_tuner_jit_phase2->end();
+                                    }
+                                else
+                                    {
+                                    m_tuner_depletants_phase2->end();
+                                    }
 
                                 // wait for worker streams to complete
                                 for (int idev = gpu_map.size() - 1; idev >= 0; --idev)
@@ -1693,7 +1825,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             block_size,
                             tpp,
                             eval_threads,
-                            0, // default stream
+                            &m_patch_streams.front(),
                             m_tuner_narrow_patch->getDeviceParams()
                             );
 
@@ -1741,12 +1873,14 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_deltaF_or_nneigh(m_deltaF_or_nneigh, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_deltaF_or_nlist(m_deltaF_or_nlist, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_deltaF_or_len(m_deltaF_or_len, access_location::device, access_mode::read);
+                    ArrayHandle<float> d_deltaF_or_energy(m_deltaF_or_energy, access_location::device, access_mode::read);
                     ArrayHandle<Scalar> d_deltaF_or(m_deltaF_or, access_location::device, access_mode::read);
 
                     ArrayHandle<unsigned int> d_deltaF_nor_nneigh(m_deltaF_nor_nneigh, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_deltaF_nor_nlist(m_deltaF_nor_nlist, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_deltaF_nor_len(m_deltaF_nor_len, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_deltaF_nor_k(m_deltaF_nor_k, access_location::device, access_mode::read);
+                    ArrayHandle<float> d_deltaF_nor_energy(m_deltaF_nor_energy, access_location::device, access_mode::read);
                     ArrayHandle<Scalar> d_deltaF_nor(m_deltaF_nor, access_location::device, access_mode::read);
 
                     ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::overwrite);
@@ -1778,12 +1912,14 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         d_deltaF_or_nneigh.data,
                         d_deltaF_or_len.data,
                         d_deltaF_or_nlist.data,
+                        d_deltaF_or_energy.data,
                         d_deltaF_or.data,
                         m_deltaF_or_maxlen,
                         d_deltaF_nor_nneigh.data,
                         d_deltaF_nor_len.data,
                         d_deltaF_nor_k.data,
                         d_deltaF_nor_nlist.data,
+                        d_deltaF_nor_energy.data,
                         d_deltaF_nor.data,
                         d_F.data,
                         m_deltaF_nor_maxlen,
@@ -2462,6 +2598,21 @@ void IntegratorHPMCMonoGPU< Shape >::updateCellWidth()
                     obb.lengths.z += 0.5*range;
                 else
                     obb.lengths.z = 0.5; // unit length
+
+                if (this->m_patch)
+                    {
+                    Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(k_type);
+                    delta += 0.5*this->m_patch->getAdditiveCutoff(i_type);
+
+                    Scalar min_obb = std::min(obb.lengths.x,std::min(obb.lengths.y, obb.lengths.z));
+                    Scalar max_obb = std::max(obb.lengths.x,std::max(obb.lengths.y, obb.lengths.z));
+
+                    Scalar r_cut_patch = this->m_patch->getRCut();
+                    if (r_cut_patch + delta > min_obb)
+                        {
+                        obb = detail::OBB(vec3<Scalar>(0,0,0), std::max(r_cut_patch + delta, max_obb));
+                        }
+                    }
 
                 Scalar lambda = std::abs(this->m_fugacity[this->m_depletant_idx(i_type,j_type)]*
                     obb.getVolume(this->m_sysdef->getNDimensions()));

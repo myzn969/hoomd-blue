@@ -184,26 +184,23 @@ class PYBIND11_EXPORT NVRTCEvalFactory
         #endif
 
         template<typename... TArgs, typename T, typename... Args>
-        void setGlobalVariable(const std::string& var, T value, cudaStream_t stream, Args&&... args)
+        void setGlobalVariable(unsigned int idev, const std::string& var,
+            T value, cudaStream_t stream, Args&&... args)
             {
             #ifdef __HIP_PLATFORM_NVCC__
             auto types = detail::for_each_type<std::tuple<TArgs...> >();
-            auto gpu_map = m_exec_conf->getGPUIds();
-            for (int idev = m_exec_conf->getNumActiveGPUs()-1; idev >= 0; --idev)
-                {
-                cudaSetDevice(gpu_map[idev]);
-                CUdeviceptr ptr = detail::instantiate(m_program[idev].kernel(m_kernel_name),
-                    types, std::forward<Args>(args)...)
-                    .get_global_ptr(var.c_str());
 
-                // copy the value to the device
-                char *error;
-                CUresult custatus = cuMemcpyHtoDAsync(ptr, &value, sizeof(T), stream);
-                if (custatus != CUDA_SUCCESS)
-                    {
-                    cuGetErrorString(custatus, const_cast<const char **>(&error));
-                    throw std::runtime_error("cuMemcpyHtoDAsync: "+std::string(error));
-                    }
+            CUdeviceptr ptr = detail::instantiate(m_program[idev].kernel(m_kernel_name),
+                types, std::forward<Args>(args)...)
+                .get_global_ptr(var.c_str());
+
+            // copy the value to the device
+            char *error;
+            CUresult custatus = cuMemcpyHtoDAsync(ptr, &value, sizeof(T), stream);
+            if (custatus != CUDA_SUCCESS)
+                {
+                cuGetErrorString(custatus, const_cast<const char **>(&error));
+                throw std::runtime_error("cuMemcpyHtoDAsync: "+std::string(error));
                 }
             #endif
             }
