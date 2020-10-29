@@ -693,7 +693,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
             __syncthreads();
             if (master && group == 0)
                 s_queue_size = 0;
-            if (threadIdx.x ==0 && active && (k>>1) < excell_size)
+            if (threadIdx.x == 0 && active && (k>>1) < excell_size)
                 atomicAdd(&s_still_searching, 1);
             __syncthreads();
 
@@ -701,7 +701,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
 
         if (active && master && s_len_group[group] && s_len_group[group] <= max_len)
             {
-            #if (__CUDA_ARCH >= 600)
+            #if (__CUDA_ARCH__ >= 600)
             unsigned int n = atomicAdd_system(&d_deltaF_or_nneigh[i], s_len_group[group]);
             #else
             unsigned int n = atomicAdd(&d_deltaF_or_nneigh[i], s_len_group[group]);

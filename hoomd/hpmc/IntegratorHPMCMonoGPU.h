@@ -1657,7 +1657,6 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                         implicit_args,
                                         auxiliary_args,
                                         params.data());
-
                                     }
 
                                 if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
@@ -2238,6 +2237,10 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
         m_deltaF_or_len.swap(deltaF_or_len);
         TAG_ALLOCATION(m_deltaF_or_len);
 
+        GlobalArray<float> deltaF_or_energy(req_size_nlist, this->m_exec_conf);
+        m_deltaF_or_energy.swap(deltaF_or_energy);
+        TAG_ALLOCATION(m_deltaF_or_energy);
+
         #ifdef __HIP_PLATFORM_NVCC__
         // update memory hints
         if (this->m_exec_conf->allConcurrentManagedAccess())
@@ -2275,6 +2278,15 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
                 cudaMemPrefetchAsync(m_deltaF_or_len.get()+range.first*m_deltaF_or_maxlen,
                     sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
                     gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_or_energy.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(float)*nelem*m_deltaF_or_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_or_energy.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(float)*nelem*m_deltaF_or_maxlen,
+                    gpu_map[idev]);
+
                 CHECK_CUDA_ERROR();
                 }
             }
@@ -2315,6 +2327,10 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
         GlobalArray<unsigned int> deltaF_nor_k(req_size_nlist, this->m_exec_conf);
         m_deltaF_nor_k.swap(deltaF_nor_k);
         TAG_ALLOCATION(m_deltaF_nor_k);
+
+        GlobalArray<float> deltaF_nor_energy(req_size_nlist, this->m_exec_conf);
+        m_deltaF_nor_energy.swap(deltaF_nor_energy);
+        TAG_ALLOCATION(m_deltaF_nor_energy);
 
         #ifdef __HIP_PLATFORM_NVCC__
         // update memory hints
@@ -2360,6 +2376,14 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
                     gpu_map[idev]);
                 cudaMemPrefetchAsync(m_deltaF_nor_k.get()+range.first*m_deltaF_nor_maxlen,
                     sizeof(unsigned int)*nelem*m_deltaF_nor_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_nor_energy.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(float)*nelem*m_deltaF_nor_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_nor_energy.get()+range.first*m_deltaF_nor_maxlen,
+                    sizeof(float)*nelem*m_deltaF_nor_maxlen,
                     gpu_map[idev]);
 
                 CHECK_CUDA_ERROR();
