@@ -322,7 +322,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                         }
                     }
 
-                float f_j = has_overlap + (1-has_overlap)*(1.0-fast::exp(-U_j));
+                float f_j = has_overlap + (1-has_overlap)*(1.0f-fast::exp(-U_j));
                 if (f_j != 0.0)
                     {
                     float f_i = d_deltaF_or[maxn_deltaF_or*i + cur_neigh];
@@ -372,7 +372,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                     bool j_has_been_updated = j < N && d_trial_move_type[j]
                         && d_update_order_by_ptl[j] < update_order_i && !d_reject[j];
 
-                    if ((j_old && !j_has_been_updated) || (!j_old && j_has_been_updated))
+                    if (i == j || (j_old && !j_has_been_updated) || (!j_old && j_has_been_updated))
                         {
                         if (j_flag & 1)
                             {
@@ -389,7 +389,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                         }
                     }
 
-                float f_j = has_overlap + (1-has_overlap)*(1.0-fast::exp(-U_j));
+                float f_j = has_overlap + (1-has_overlap)*(1.0f-fast::exp(-U_j));
                 float f_k = d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh];
                 if (f_j != 0.0)
                     {
@@ -399,7 +399,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 if (n_self < 2)
                     {
                     // need to add back neighbor term in other the configuration on the opposite side of the fraction
-                    float f_j_other = has_overlap_other + (1-has_overlap_other)*(1.0-fast::exp(-U_j_other));
+                    float f_j_other = has_overlap_other + (1-has_overlap_other)*(1.0f-fast::exp(-U_j_other));
 
                     if (f_j_other != 0.0)
                         atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_k*f_j_other)),-f_k*f_j_other));
