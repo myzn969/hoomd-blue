@@ -1902,11 +1902,12 @@ void IntegratorHPMCMono<Shape>::updateCellWidth()
                             2*this->m_patch->getRCut();
                     max_d = std::max(max_d, d_dep);
                     }
-                max_extent = std::max(max_extent, this->m_patch->getAdditiveCutoff(typ) + d_dep);
+                max_extent = std::max(max_extent,
+                    std::max(this->m_patch->getAdditiveCutoff(typ) + this->m_patch->getRCut(), d_dep));
                 }
             }
 
-        this->m_nominal_width = std::max(this->m_nominal_width, this->m_patch->getRCut() + max_extent);
+        this->m_nominal_width = std::max(this->m_nominal_width, max_extent);
         }
 
     // extend the image list by the depletant diameter, since we're querying
