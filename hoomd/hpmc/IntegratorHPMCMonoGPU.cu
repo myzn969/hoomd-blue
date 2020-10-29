@@ -326,7 +326,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 if (f_j != 0.0)
                     {
                     float f_i = d_deltaF_or[maxn_deltaF_or*i + cur_neigh];
-                    atomicAdd(&s_deltaF[group], signbit(f_i*f_j)*logf(1+fabsf(f_i*f_j)));
+                    atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_i*f_j)),f_i*f_j));
                     }
                 } // end loop over terms
 
@@ -376,13 +376,10 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                         {
                         if (j_flag & 1)
                             {
-                            has_overlap = false;
+                            has_overlap = true;
 
                             if (j != i)
-                                {
-                                has_overlap_other = false;
-                                break; // shortcut
-                                }
+                                has_overlap_other = true;
                             }
 
                         float t = d_deltaF_nor_energy[maxn_deltaF_nor*i + cur_term];
@@ -396,14 +393,16 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 float f_k = d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh];
                 if (f_j != 0.0)
                     {
-                    atomicAdd(&s_deltaF[group], signbit(f_k*f_j)*logf(1+fabsf(f_k*f_j)));
+                    atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_k*f_j)),f_k*f_j));
                     }
 
                 if (n_self < 2)
                     {
                     // need to add back neighbor term in other the configuration on the opposite side of the fraction
                     float f_j_other = has_overlap_other + (1-has_overlap_other)*(1.0-fast::exp(-U_j_other));
-                    atomicAdd(&s_deltaF[group], signbit(-f_k*f_j_other)*logf(1+fabsf(f_k*f_j_other)));
+
+                    if (f_j_other != 0.0)
+                        atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_k*f_j_other)),-f_k*f_j_other));
                     }
                 } // end loop over terms
             } // end depletants
