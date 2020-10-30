@@ -17,11 +17,17 @@
 #define DEVICE
 #endif
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 namespace jit
 {
 
 //! Data structure for shape composed of a union of multiple shapes
-struct __attribute__((aligned(sizeof(Scalar4)))) // align to largest data type used in shared memory storage
+struct ALIGN(sizeof(Scalar4)) // align to largest data type used in shared memory storage
 union_params_t
     {
     //! Default constructor
@@ -100,10 +106,10 @@ union_params_t
 
 #ifdef __HIPCC__
 // Storage for shape parameters
-__device__ static union_params_t *d_union_params;
+__device__ union_params_t *d_union_params;
 
 //! Device storage of rcut value
-__device__ static float d_rcut_union;
+__device__ float d_rcut_union;
 
 __device__ inline float compute_leaf_leaf_energy(const union_params_t* params,
                              float r_cut,
@@ -246,4 +252,5 @@ __device__ inline float eval_union(const union_params_t *params,
 
 #undef HOSTDEVICE
 #undef DEVICE
+#undef ALIGN
 } // end namespace jit
