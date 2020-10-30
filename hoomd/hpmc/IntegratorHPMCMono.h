@@ -212,9 +212,6 @@ class IntegratorHPMCMono : public IntegratorHPMC
         //! Get the maximum particle diameter
         virtual Scalar getMaxCoreDiameter();
 
-        //! Get the minimum particle diameter
-        virtual OverlapReal getMinCoreDiameter();
-
         //! Set the pair parameters for a single type
         virtual void setParam(unsigned int typ, const param_type& param);
 
@@ -1027,7 +1024,7 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
 
             // subtract minimum AABB extent from search radius
             OverlapReal R_query = std::max(shape_i.getCircumsphereDiameter()/OverlapReal(2.0),
-                r_cut_patch-getMinCoreDiameter()/(OverlapReal)2.0);
+                r_cut_patch);
             detail::AABB aabb_i_local = detail::AABB(vec3<Scalar>(0,0,0),R_query);
 
             // patch + field interaction deltaU
@@ -1507,7 +1504,7 @@ float IntegratorHPMCMono<Shape>::computePatchEnergy(unsigned int timestep)
 
         // subtract minimum AABB extent from search radius
         OverlapReal R_query = std::max(shape_i.getCircumsphereDiameter()/OverlapReal(2.0),
-            r_cut-getMinCoreDiameter()/(OverlapReal)2.0);
+            r_cut);
         detail::AABB aabb_i_local = detail::AABB(vec3<Scalar>(0,0,0),R_query);
 
         const unsigned int n_images = m_image_list.size();
@@ -1615,28 +1612,6 @@ Scalar IntegratorHPMCMono<Shape>::getMaxCoreDiameter()
             }
         }
     return max_d;
-    }
-
-template <class Shape>
-OverlapReal IntegratorHPMCMono<Shape>::getMinCoreDiameter()
-    {
-    // for each type, create a temporary shape and return the minimum diameter
-    OverlapReal minD = OverlapReal(0.0);
-    for (unsigned int typ = 0; typ < this->m_pdata->getNTypes(); typ++)
-        {
-        Shape temp(quat<Scalar>(), m_params[typ]);
-        minD = std::min(minD, temp.getCircumsphereDiameter());
-        }
-
-    if (m_patch)
-        {
-        OverlapReal max_extent = 0.0;
-        for (unsigned int typ =0; typ < this->m_pdata->getNTypes(); typ++)
-            max_extent = std::max(max_extent, (OverlapReal) m_patch->getAdditiveCutoff(typ));
-        minD = std::max((OverlapReal) 0.0, minD-max_extent);
-        }
-
-    return minD;
     }
 
 template <class Shape>
@@ -2185,8 +2160,7 @@ std::vector<float> IntegratorHPMCMono<Shape>::mapEnergies()
 
         // Check particle against AABB tree for neighbors
         Scalar r_cut_patch = m_patch->getRCut() + 0.5*m_patch->getAdditiveCutoff(typ_i);
-        OverlapReal R_query = r_cut_patch-getMinCoreDiameter()/(OverlapReal)2.0;
-        detail::AABB aabb_i_local = detail::AABB(vec3<Scalar>(0,0,0),R_query);
+        detail::AABB aabb_i_local = detail::AABB(vec3<Scalar>(0,0,0),r_cut_patch);
 
         const unsigned int n_images = m_image_list.size();
         for (unsigned int cur_image = 0; cur_image < n_images; cur_image++)
@@ -2542,12 +2516,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
             delta += this->m_patch->getAdditiveCutoff(type_a);
 
-            Scalar min_aabb = 0.5*std::min(upper.x-lower.x, std::min(upper.y-lower.y, upper.z-lower.z));
-            Scalar max_aabb = 0.5*std::max(upper.x-lower.x, std::max(upper.y-lower.y, upper.z-lower.z));
-            if (2*r_cut_patch + delta > min_aabb)
-                {
-                aabb_local = detail::AABB(vec3<Scalar>(0,0,0), std::max(2*r_cut_patch + delta - getMinCoreDiameter(), max_aabb));
-                }
+            lower.x = std::min(lower.x, -2*r_cut_patch-delta);
+            lower.y = std::min(lower.y, -2*r_cut_patch-delta);
+            lower.z = std::min(lower.z, -2*r_cut_patch-delta);
+            upper.x = std::max(upper.x, 2*r_cut_patch+delta);
+            upper.y = std::max(upper.y, 2*r_cut_patch+delta);
+            upper.z = std::max(upper.z, 2*r_cut_patch+delta);
+            aabb_local = detail::AABB(lower,upper);
             }
 
         // All image boxes (including the primary)
@@ -2642,12 +2617,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
             delta += this->m_patch->getAdditiveCutoff(type_a);
 
-            Scalar min_aabb = 0.5*std::min(upper.x-lower.x, std::min(upper.y-lower.y, upper.z-lower.z));
-            Scalar max_aabb = 0.5*std::max(upper.x-lower.x, std::max(upper.y-lower.y, upper.z-lower.z));
-            if (2*r_cut_patch + delta > min_aabb)
-                {
-                aabb_local = detail::AABB(vec3<Scalar>(0,0,0), std::max(2*r_cut_patch + delta - getMinCoreDiameter(), max_aabb));
-                }
+            lower.x = std::min(lower.x, -2*r_cut_patch-delta);
+            lower.y = std::min(lower.y, -2*r_cut_patch-delta);
+            lower.z = std::min(lower.z, -2*r_cut_patch-delta);
+            upper.x = std::max(upper.x, 2*r_cut_patch+delta);
+            upper.y = std::max(upper.y, 2*r_cut_patch+delta);
+            upper.z = std::max(upper.z, 2*r_cut_patch+delta);
+            aabb_local = detail::AABB(lower,upper);
             }
 
         // find neighbors at new position
@@ -2761,16 +2737,11 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
             if (this->m_patch)
                 {
-                Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
                 delta += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-
-                Scalar min_obb = std::min(obb_i.lengths.x,std::min(obb_i.lengths.y, obb_i.lengths.z));
-                Scalar max_obb = std::max(obb_i.lengths.x,std::max(obb_i.lengths.y, obb_i.lengths.z));
-
-                if (r_cut_patch + delta > min_obb)
-                    {
-                    obb_i = detail::OBB(new_config ? pos_i : pos_i_old, std::max(r_cut_patch + delta, max_obb));
-                    }
+                obb_i.lengths.x = std::max(obb_i.lengths.x, (OverlapReal) r_cut_patch + delta);
+                obb_i.lengths.y = std::max(obb_i.lengths.y, (OverlapReal) r_cut_patch + delta);
+                obb_i.lengths.z = std::max(obb_i.lengths.z, (OverlapReal) r_cut_patch + delta);
                 }
 
             Scalar V_i = obb_i.getVolume(ndim);
@@ -3063,17 +3034,11 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         if (this->m_patch)
                             {
                             Scalar r_cut_patch = this->m_patch->getRCut();
-
-                            Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_k);
+                            OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_k);
                             delta += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-
-                            Scalar min_obb = std::min(obb_k.lengths.x,std::min(obb_k.lengths.y, obb_k.lengths.z));
-                            Scalar max_obb = std::max(obb_k.lengths.x,std::max(obb_k.lengths.y, obb_k.lengths.z));
-
-                            if (r_cut_patch + delta > min_obb)
-                                {
-                                obb_k = detail::OBB(pos_k, std::max(r_cut_patch + delta, max_obb));
-                                }
+                            obb_k.lengths.x = std::max(obb_k.lengths.x, (OverlapReal) r_cut_patch + delta);
+                            obb_k.lengths.y = std::max(obb_k.lengths.y, (OverlapReal) r_cut_patch + delta);
+                            obb_k.lengths.z = std::max(obb_k.lengths.z, (OverlapReal) r_cut_patch + delta);
                             }
 
                         V_k = obb_k.getVolume(ndim);

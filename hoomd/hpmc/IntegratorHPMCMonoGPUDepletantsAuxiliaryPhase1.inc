@@ -267,23 +267,19 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
         // extend by depletant radius
         Shape shape_test(quat<Scalar>(), s_params[depletant_type]);
         OverlapReal r = 0.5*shape_test.getCircumsphereDiameter();
+
         obb_i.lengths.x += r;
         obb_i.lengths.y += r;
         obb_i.lengths.z += r;
 
         if (patch)
             {
-            Scalar delta = 0.5*s_additive_cutoff[s_type_i];
+            OverlapReal delta = 0.5*s_additive_cutoff[s_type_i];
             delta += 0.5*s_additive_cutoff[depletant_type];
 
-            Scalar min_obb = detail::min(obb_i.lengths.x,detail::min(obb_i.lengths.y, obb_i.lengths.z));
-            Scalar max_obb = detail::max(obb_i.lengths.x,detail::max(obb_i.lengths.y, obb_i.lengths.z));
-
-            if (r_cut_patch + delta > min_obb)
-                {
-                obb_i = detail::OBB(new_config ? vec3<Scalar>(s_pos_i_new) : vec3<Scalar>(s_pos_i_old),
-                    detail::max(r_cut_patch + delta, max_obb));
-                }
+            obb_i.lengths.x = detail::max(obb_i.lengths.x, (OverlapReal) r_cut_patch + delta);
+            obb_i.lengths.y = detail::max(obb_i.lengths.y, (OverlapReal) r_cut_patch + delta);
+            obb_i.lengths.z = detail::max(obb_i.lengths.z, (OverlapReal) r_cut_patch + delta);
             }
         }
 

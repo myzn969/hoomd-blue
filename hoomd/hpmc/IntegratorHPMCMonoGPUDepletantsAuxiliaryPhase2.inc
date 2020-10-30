@@ -272,16 +272,12 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
 
         if (patch)
             {
-            Scalar delta = 0.5*s_additive_cutoff[s_type_i];
+            OverlapReal delta = 0.5*s_additive_cutoff[s_type_i];
             delta += 0.5*s_additive_cutoff[depletant_type];
 
-            Scalar min_obb = detail::min(obb_i.lengths.x,detail::min(obb_i.lengths.y, obb_i.lengths.z));
-            Scalar max_obb = detail::max(obb_i.lengths.x,detail::max(obb_i.lengths.y, obb_i.lengths.z));
-
-            if (r_cut_patch + delta > min_obb)
-                {
-                obb_i = detail::OBB(vec3<Scalar>(s_cur_pos_i), detail::max(r_cut_patch + delta, max_obb));
-                }
+            obb_i.lengths.x = detail::max(obb_i.lengths.x, (OverlapReal) r_cut_patch + delta);
+            obb_i.lengths.y = detail::max(obb_i.lengths.y, (OverlapReal) r_cut_patch + delta);
+            obb_i.lengths.z = detail::max(obb_i.lengths.z, (OverlapReal) r_cut_patch + delta);
             }
         }
 

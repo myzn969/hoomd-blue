@@ -2618,24 +2618,20 @@ void IntegratorHPMCMonoGPU< Shape >::updateCellWidth()
                 detail::OBB obb = shape_k.getOBB(vec3<Scalar>(0,0,0));
                 obb.lengths.x += 0.5*range;
                 obb.lengths.y += 0.5*range;
-                if (this->m_sysdef->getNDimensions() == 3)
-                    obb.lengths.z += 0.5*range;
-                else
-                    obb.lengths.z = 0.5; // unit length
+                obb.lengths.z += 0.5*range;
 
                 if (this->m_patch)
                     {
-                    Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(k_type);
+                    OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(k_type);
                     delta += 0.5*this->m_patch->getAdditiveCutoff(i_type);
 
-                    Scalar min_obb = std::min(obb.lengths.x,std::min(obb.lengths.y, obb.lengths.z));
-                    Scalar max_obb = std::max(obb.lengths.x,std::max(obb.lengths.y, obb.lengths.z));
-
                     Scalar r_cut_patch = this->m_patch->getRCut();
-                    if (r_cut_patch + delta > min_obb)
-                        {
-                        obb = detail::OBB(vec3<Scalar>(0,0,0), std::max(r_cut_patch + delta, max_obb));
-                        }
+                    obb.lengths.x = std::max(obb.lengths.x, (OverlapReal) r_cut_patch + delta);
+                    obb.lengths.y = std::max(obb.lengths.y, (OverlapReal) r_cut_patch + delta);
+                    if (this->m_sysdef->getNDimensions() == 3)
+                        obb.lengths.z = std::max(obb.lengths.z, (OverlapReal) r_cut_patch + delta);
+                    else
+                        obb.lengths.z = 0.5; // unit length
                     }
 
                 Scalar lambda = std::abs(this->m_fugacity[this->m_depletant_idx(i_type,j_type)]*

@@ -1145,9 +1145,6 @@ void UpdaterClusters<Shape>::findInteractions(unsigned int timestep, const quat<
     // update the image list
     auto& image_list = m_mc->updateImageList();
 
-    // minimum AABB extent
-    Scalar min_core_diameter = m_mc->getMinCoreDiameter();
-
     Index2D overlap_idx = m_mc->getOverlapIndexer();
     ArrayHandle<unsigned int> h_overlaps(m_mc->getInteractionMatrix(), access_location::host, access_mode::read);
 
@@ -1196,7 +1193,7 @@ void UpdaterClusters<Shape>::findInteractions(unsigned int timestep, const quat<
 
             // subtract minimum AABB extent from search radius
             Scalar extent_i = 0.5*patch->getAdditiveCutoff(typ_i);
-            OverlapReal R_query = std::max(0.0,r_cut_patch+extent_i-min_core_diameter/(OverlapReal)2.0);
+            OverlapReal R_query = std::max(0.0,r_cut_patch+extent_i);
             detail::AABB aabb_local = detail::AABB(vec3<Scalar>(0,0,0),R_query);
 
             const unsigned int n_images = image_list.size();
@@ -1360,7 +1357,7 @@ void UpdaterClusters<Shape>::findInteractions(unsigned int timestep, const quat<
             {
             // subtract minimum AABB extent from search radius
             Scalar extent_i = 0.5*patch->getAdditiveCutoff(typ_i);
-            OverlapReal R_query = std::max(0.0,r_cut_patch+extent_i-min_core_diameter/(OverlapReal)2.0);
+            OverlapReal R_query = std::max(0.0,r_cut_patch+extent_i);
             detail::AABB aabb_local = detail::AABB(vec3<Scalar>(0,0,0),R_query);
 
             // compute V(r'-r)
