@@ -30,6 +30,12 @@
 #include <iostream>
 #endif
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 namespace hpmc
 {
 
@@ -55,7 +61,7 @@ struct union_depletion_storage
 
 //! Data structure for shape composed of a union of multiple shapes
 template<class Shape>
-struct union_params : param_base
+struct ALIGN(32) union_params : param_base
     {
     typedef GPUTree gpu_tree_type; //!< Handy typedef for GPUTree template
     typedef typename Shape::param_type mparam_type;
@@ -148,7 +154,7 @@ struct union_params : param_base
     OverlapReal diameter;                    //!< Precalculated overall circumsphere diameter
     unsigned int N;                           //!< Number of member shapes
     unsigned int ignore;                     //!<  Bitwise ignore flag for stats. 1 will ignore, 0 will not ignore
-    } __attribute__((aligned(32)));
+    };
 
 } // end namespace detail
 
@@ -399,4 +405,5 @@ inline std::string getShapeSpec(const ShapeUnion<ShapeSphere>& sphere_union)
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif // end __SHAPE_UNION_H__

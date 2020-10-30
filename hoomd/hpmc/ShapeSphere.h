@@ -36,6 +36,12 @@
 
 #define SMALL 1e-5
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 namespace hpmc
 {
 
@@ -108,7 +114,7 @@ struct param_base
 
     \ingroup shape
 */
-struct sph_params : param_base
+struct ALIGN(32) sph_params : param_base
     {
     OverlapReal radius;                 //!< radius of sphere
     unsigned int ignore;                //!< Bitwise ignore flag for stats, overlaps. 1 will ignore, 0 will not ignore
@@ -116,14 +122,14 @@ struct sph_params : param_base
     bool isOriented;                    //!< Flag to specify whether a sphere has orientation or not. Intended for
                                         //!  for use with anisotropic/patchy pair potentials.
 
-    #ifdef ENABLE_HIP
-    //! Set CUDA memory hints
+        #ifdef ENABLE_HIP
+        //! Set CUDA memory hints
     void set_memory_hint() const
         {
         // default implementation does nothing
         }
     #endif
-    } __attribute__((aligned(32)));
+    };
 
 struct ShapeSphere
     {
@@ -623,4 +629,5 @@ inline std::string getShapeSpec(const ShapeSphere& sphere)
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif //__SHAPE_SPHERE_H__

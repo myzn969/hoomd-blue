@@ -24,6 +24,12 @@
 #define HOSTDEVICE
 #endif
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 #include "SphinxOverlap.h"  //< This is the main overlap function.
 
 namespace hpmc
@@ -38,7 +44,7 @@ const unsigned int MAX_SPHERE_CENTERS = 8;
 
 //! Data structure for sphere centers and diameters
 /*! \ingroup hpmc_data_structs */
-struct sphinx3d_params : param_base
+struct ALIGN(32) sphinx3d_params : param_base
     {
     OverlapReal circumsphereDiameter;               //!< Circumsphere Diameter of all spheres defined in intersection
     unsigned int N;                                //!< Number of spheres
@@ -53,7 +59,7 @@ struct sphinx3d_params : param_base
         // default implementation does nothing
         }
     #endif
-    } __attribute__((aligned(32)));
+    };
 
 }; // end namespace detail
 
@@ -620,4 +626,5 @@ DEVICE inline OverlapReal initVolume(bool disjoint, OverlapReal r[MAX_SPHERE_CEN
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif // __SHAPE_SPHINX_H__

@@ -15,6 +15,12 @@
 #include "GPUTree.h"
 #include <hoomd/extern/triangle_triangle.h>
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 #ifndef __SHAPE_POLYHEDRON_H__
 #define __SHAPE_POLYHEDRON_H__
 
@@ -58,7 +64,7 @@ namespace detail
 //! Data structure for general polytopes
 /*! \ingroup hpmc_data_structs */
 
-struct poly3d_data : param_base
+struct ALIGN(32) poly3d_data : param_base
     {
     DEVICE poly3d_data() : n_faces(0), ignore(0) {};
 
@@ -127,7 +133,7 @@ struct poly3d_data : param_base
         face_overlap.set_memory_hint();
         }
     #endif
-    } __attribute__((aligned(32)));
+    };
 
 }; // end namespace detail
 
@@ -974,4 +980,5 @@ inline std::string getShapeSpec(const ShapePolyhedron& s)
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif //__SHAPE_POLYHEDRON_H__

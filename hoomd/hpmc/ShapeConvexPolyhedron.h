@@ -32,6 +32,12 @@
 #endif
 #endif
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 namespace hpmc
 {
 
@@ -44,8 +50,7 @@ namespace detail
 //! Data structure for polyhedron vertices
 //! Note that vectorized methods using this struct will assume unused coordinates are set to zero.
 /*! \ingroup hpmc_data_structs */
-struct poly3d_verts : param_base
-
+struct ALIGN(32) poly3d_verts : param_base
     {
     //! Default constructor initializes zero values.
     DEVICE poly3d_verts()
@@ -121,7 +126,7 @@ struct poly3d_verts : param_base
                                             //   First bit is ignore overlaps, Second bit is ignore statistics
 
     detail::OBB obb;                        //!< Tight fitting bounding box
-    } __attribute__((aligned(32)));
+    };
 
 //! Support function for ShapePolyhedron
 /*! SupportFuncPolyhedron is a functor that computes the support function for ShapePolyhedron. For a given
@@ -678,4 +683,5 @@ DEVICE inline bool test_overlap(const vec3<Scalar>& r_ab,
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif //__SHAPE_CONVEX_POLYHEDRON_H__

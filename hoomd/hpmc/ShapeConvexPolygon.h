@@ -29,6 +29,12 @@
 #endif
 #endif
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 namespace hpmc
 {
 
@@ -42,7 +48,7 @@ const unsigned int MAX_POLY2D_VERTS=64;
 
 //! Data structure for polygon vertices
 /*! \ingroup hpmc_data_structs */
-struct poly2d_verts : param_base
+struct ALIGN(32) poly2d_verts : param_base
     {
     //! Default constructor initializes zero values.
     DEVICE poly2d_verts()
@@ -72,7 +78,7 @@ struct poly2d_verts : param_base
     OverlapReal sweep_radius;           //!< Radius of the sphere sweep (used for spheropolygons)
     unsigned int ignore;                //!< Bitwise ignore flag for stats, overlaps. 1 will ignore, 0 will not ignore
                                         //   First bit is ignore overlaps, Second bit is ignore statistics
-    } __attribute__((aligned(32)));
+    };
 
 //! Support function for ShapeConvexPolygon
 /*! SupportFuncConvexPolygon is a functor that computes the support function for ShapeConvexPolygon. For a given
@@ -538,4 +544,5 @@ inline std::string getShapeSpec(const ShapeConvexPolygon& poly)
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif //__SHAPE_CONVEX_POLYGON_H__

@@ -26,6 +26,12 @@
 #include <iomanip>
 #endif
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 #define ELLIPSOID_OVERLAP_ERROR 2
 #define ELLIPSOID_OVERLAP_TRUE 1
 #define ELLIPSOID_OVERLAP_FALSE 0
@@ -48,7 +54,7 @@ namespace hpmc
 
     \ingroup shape
 */
-struct ell_params : param_base
+struct ALIGN(32) ell_params : param_base
     {
     OverlapReal x;                      //!< x semiaxis of the ellipsoid
     OverlapReal y;                      //!< y semiaxis of the ellipsoid
@@ -63,7 +69,7 @@ struct ell_params : param_base
         // default implementation does nothing
         }
     #endif
-    } __attribute__((aligned(32)));
+    };
 
 struct ShapeEllipsoid
     {
@@ -463,4 +469,5 @@ inline std::string getShapeSpec(const ShapeEllipsoid& ellipsoid)
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif //__SHAPE_ELLIPSOID_H__

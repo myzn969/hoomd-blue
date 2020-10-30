@@ -11,6 +11,12 @@
 #include "hoomd/AABB.h"
 #include "OBB.h"
 
+#ifdef __HIPCC__
+#define ALIGN(x) __align__(x)
+#else
+#define ALIGN(x) alignas(x)
+#endif
+
 #ifndef __SHAPE_FACETED_SPHERE_H__
 #define __SHAPE_FACETED_SPHERE_H__
 
@@ -46,7 +52,7 @@ namespace detail
 
 //! Data structure for intersection planes
 /*! \ingroup hpmc_data_structs */
-struct faceted_ellipsoid_params : param_base
+struct ALIGN(32) faceted_ellipsoid_params : param_base
     {
     //! Empty constructor
     DEVICE faceted_ellipsoid_params()
@@ -110,7 +116,7 @@ struct faceted_ellipsoid_params : param_base
         additional_verts.set_memory_hint();
         }
     #endif
-    } __attribute__((aligned(32)));
+    };
 
 //! Support function for ShapeFacetedEllipsoid
 /* \ingroup minkowski
@@ -511,4 +517,5 @@ DEVICE inline bool test_overlap<ShapeFacetedEllipsoid, ShapeFacetedEllipsoid>(
 
 #undef DEVICE
 #undef HOSTDEVICE
+#undef ALIGN
 #endif //__SHAPE_FACETED_SPHERE_H__
