@@ -51,6 +51,7 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITGPU> : public JITNarrowPhase<Shape
         using JIT = PatchEnergyJITGPU;
 
         const std::string kernel_code = R"(
+            #include "hoomd/hpmc/Shapes.h"
             #include "hoomd/hpmc/IntegratorHPMCMonoGPUJIT.inc"
         )";
         const std::string kernel_name = "hpmc::gpu::kernel::hpmc_narrow_phase_patch";
@@ -213,6 +214,7 @@ class JITNarrowPhaseImpl<Shape, PatchEnergyJITUnionGPU> : public JITNarrowPhase<
 
         const std::string kernel_code = R"(
             #define UNION_EVAL // use union evaluator
+            #include "hoomd/hpmc/Shapes.h"
             #include "hoomd/hpmc/IntegratorHPMCMonoGPUJIT.inc"
         )";
         const std::string kernel_name = "hpmc::gpu::kernel::hpmc_narrow_phase_patch_union";

@@ -3,8 +3,6 @@
 
 #pragma once
 
-#include <hip/hip_runtime.h>
-
 #include "hoomd/HOOMDMath.h"
 #include "hoomd/VectorMath.h"
 #include "hoomd/Index1D.h"
@@ -20,16 +18,15 @@
 #include "GPUHelpers.cuh"
 #include "HPMCMiscFunctions.h"
 
-#include "IntegratorHPMCMonoGPUDepletantsAuxiliaryTypes.cuh"
-#include "IntegratorHPMCMonoGPUDepletants.cuh"
-
 #include "hoomd/jit/Evaluator.cuh"
 #include "hoomd/jit/EvaluatorUnionGPU.cuh"
 
 #ifdef __HIPCC__
-namespace hpmc {
+namespace hpmc
+{
 
-namespace gpu {
+namespace gpu
+{
 
 namespace kernel
 {
@@ -123,7 +120,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
     __shared__ unsigned int s_depletant_queue_size;
 
     // load the per type pair parameters into shared memory
-    HIP_DYNAMIC_SHARED( char, s_data)
+    extern __shared__ char s_data[];
     typename Shape::param_type *s_params = (typename Shape::param_type *)(&s_data[0]);
     jit::union_params_t *s_union_params = (jit::union_params_t *)(s_params + num_types);
 

@@ -35,7 +35,7 @@ void NVRTCEvalFactory::compileGPU(
         "-DHOOMD_LLVMJIT_BUILD",
         "-D__HIPCC__",
         "-D__HIP_DEVICE_COMPILE__",
-        "-D__HIP_PLATFORM_NVCC__",
+        "-D__HIP_PLATFORM_NVCC__"
         };
 
     for (auto p: options)

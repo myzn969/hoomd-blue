@@ -45,7 +45,7 @@ class JITDepletantsAuxiliaryPhase2
 template<class Shape, class JIT>
 class JITDepletantsAuxiliaryPhase2Impl {};
 
-//! Launcher for hpmc_insert_depletants_phase1 kernel with templated launch bounds
+//! Launcher for hpmc_insert_depletants_phase2 kernel with templated launch bounds
 template<class Shape>
 class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITGPU> : public JITDepletantsAuxiliaryPhase2<Shape>
     {
@@ -53,9 +53,10 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITGPU> : public JITDep
         using JIT = PatchEnergyJITGPU;
 
         const std::string kernel_code = R"(
+            #include "hoomd/hpmc/Shapes.h"
             #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase2.inc"
         )";
-        const std::string kernel_name = "hpmc::gpu::kernel::hpmc_insert_depletants_phase1";
+        const std::string kernel_name = "hpmc::gpu::kernel::hpmc_insert_depletants_phase2";
 
         JITDepletantsAuxiliaryPhase2Impl(std::shared_ptr<const ExecutionConfiguration>& exec_conf,
                        std::shared_ptr<JIT> jit)
@@ -151,7 +152,7 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITGPU> : public JITDep
                     continue;
 
                 // setup up global scope variables
-                m_kernel.setup<Shape>(idev, auxiliary_args.streams_phase1[idev], bounds, true, eval_threads, false);
+                m_kernel.setup<Shape>(idev, auxiliary_args.streams_phase2[idev], bounds, true, eval_threads, false);
 
                 unsigned int blocks_per_particle = auxiliary_args.nwork_local[idev]/
                     (implicit_args.depletants_per_thread*n_groups*tpp) + 1;
@@ -183,7 +184,7 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITGPU> : public JITDep
 
                 // configure the kernel
                 auto launcher = m_kernel.getFactory()
-                    .configureKernel<Shape>(idev, grid, threads, shared_bytes, auxiliary_args.streams_phase1[idev],
+                    .configureKernel<Shape>(idev, grid, threads, shared_bytes, auxiliary_args.streams_phase2[idev],
                         bounds, true, eval_threads, false);
 
                 CUresult res = launcher(
@@ -254,7 +255,7 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITGPU> : public JITDep
         jit::JITKernel<JIT> m_kernel; // The kernel object
     };
 
-//! Launcher for hpmc_insert_depletants_phase1 kernel with templated launch bounds
+//! Launcher for hpmc_insert_depletants_phase2 kernel with templated launch bounds
 template<class Shape>
 class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITUnionGPU> : public JITDepletantsAuxiliaryPhase2<Shape>
     {
@@ -262,9 +263,10 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITUnionGPU> : public J
         using JIT = PatchEnergyJITUnionGPU;
 
         const std::string kernel_code = R"(
+            #include "hoomd/hpmc/Shapes.h"
             #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase2.inc"
         )";
-        const std::string kernel_name = "hpmc::gpu::kernel::hpmc_insert_depletants_phase1";
+        const std::string kernel_name = "hpmc::gpu::kernel::hpmc_insert_depletants_phase2";
 
         JITDepletantsAuxiliaryPhase2Impl(std::shared_ptr<const ExecutionConfiguration>& exec_conf,
                        std::shared_ptr<JIT> jit)
@@ -365,7 +367,7 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITUnionGPU> : public J
                 auto range = auxiliary_args.gpu_partition_rank.getRangeAndSetGPU(idev);
 
                 // setup up global scope variables
-                m_kernel.setup<Shape>(idev, auxiliary_args.streams_phase1[idev], bounds, true, eval_threads, true);
+                m_kernel.setup<Shape>(idev, auxiliary_args.streams_phase2[idev], bounds, true, eval_threads, true);
 
                 unsigned int nwork = range.second - range.first;
 
@@ -405,7 +407,7 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITUnionGPU> : public J
 
                 // configure the kernel
                 auto launcher = m_kernel.getFactory()
-                    .configureKernel<Shape>(idev, grid, threads, shared_bytes, auxiliary_args.streams_phase1[idev],
+                    .configureKernel<Shape>(idev, grid, threads, shared_bytes, auxiliary_args.streams_phase2[idev],
                         bounds, true, eval_threads, true);
 
                 CUresult res = launcher(

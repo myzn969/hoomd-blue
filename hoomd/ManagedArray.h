@@ -13,6 +13,10 @@
 
 #ifdef ENABLE_HIP
 #include <hip/hip_runtime.h>
+
+#if defined(__HIP_PLATFORM_NVCC__) && (CUDART_VERSION >= 8000)
+#include <cuda_runtime.h>
+#endif
 #endif
 
 #ifdef __HIPCC__
@@ -183,18 +187,18 @@ class ManagedArray
             return in_shared ? s_data : ptr;
             }
 
-        #ifdef ENABLE_HIP
         //! Attach managed memory to CUDA stream
         void set_memory_hint() const
             {
+            #if defined(ENABLE_HIP) && !defined(__HIP_DEVICE_COMPILE__)
             if (managed && ptr)
                 {
                 #if defined(__HIP_PLATFORM_NVCC__) && (CUDART_VERSION >= 8000)
                 cudaMemAdvise(ptr, sizeof(T)*N, cudaMemAdviseSetReadMostly, 0);
                 #endif
                 }
+            #endif
             }
-        #endif
 
         //! Load dynamic data members into shared memory and increase pointer
         /*! \param ptr Pointer to load data to (will be incremented)

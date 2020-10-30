@@ -53,6 +53,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
         using JIT = PatchEnergyJITGPU;
 
         const std::string kernel_code = R"(
+            #include "hoomd/hpmc/Shapes.h"
             #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase1.inc"
         )";
         const std::string kernel_name = "hpmc::gpu::kernel::hpmc_insert_depletants_phase1";
@@ -262,6 +263,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITUnionGPU> : public J
         using JIT = PatchEnergyJITUnionGPU;
 
         const std::string kernel_code = R"(
+            #include "hoomd/hpmc/Shapes.h"
             #include "hoomd/hpmc/IntegratorHPMCMonoGPUDepletantsAuxiliaryPhase1.inc"
         )";
         const std::string kernel_name = "hpmc::gpu::kernel::hpmc_insert_depletants_phase1";
