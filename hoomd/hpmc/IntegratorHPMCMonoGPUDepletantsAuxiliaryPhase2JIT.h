@@ -308,8 +308,13 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITUnionGPU> : public J
             unsigned int block_size = std::min(args.block_size, (unsigned int)max_block_size);
 
             unsigned int tpp = std::min(args.tpp,block_size);
+            while (eval_threads*tpp > block_size || block_size % (eval_threads*tpp) != 0)
+                {
+                tpp--;
+                }
+
             tpp = std::min((unsigned int) args.devprop.maxThreadsDim[2], tpp); // clamp blockDim.z
-            unsigned int n_groups = block_size / tpp;
+            unsigned int n_groups = block_size / (eval_threads*tpp);
 
             unsigned int max_queue_size = n_groups*tpp;
             unsigned int max_depletant_queue_size = n_groups;
@@ -335,8 +340,13 @@ class JITDepletantsAuxiliaryPhase2Impl<Shape, PatchEnergyJITUnionGPU> : public J
                 if (block_size == 0)
                     throw std::runtime_error("Insufficient shared memory for HPMC kernel");
                 tpp = std::min(tpp, block_size);
+                while (eval_threads*tpp > block_size || block_size % (eval_threads*tpp) != 0)
+                    {
+                    tpp--;
+                    }
+
                 tpp = std::min((unsigned int) args.devprop.maxThreadsDim[2], tpp); // clamp blockDim.z
-                n_groups = block_size / tpp;
+                n_groups = block_size / (tpp*eval_threads);
 
                 max_queue_size = n_groups*tpp;
                 max_depletant_queue_size = n_groups;
