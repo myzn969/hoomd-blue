@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2017-2020, NVIDIA CORPORATION. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -665,16 +665,18 @@ inline bool load_source(
     }
 
     // HACK WAR for Thrust using "#define FOO #pragma bar"
+    // TODO: This is not robust to block comments, line continuations, or tabs.
     size_t pragma_beg = cleanline.find("#pragma ");
     if (pragma_beg != std::string::npos) {
-      std::string line_after_pragma = line.substr(pragma_beg);
-      std::vector<std::string> pragma_split =
-          split_string(line_after_pragma, 2);
-      line =
-          (line.substr(0, pragma_beg) + "_Pragma(\"" + pragma_split[1] + "\")");
-      if (pragma_split.size() == 3) {
-        line += " " + pragma_split[2];
-      }
+      std::string line_after_pragma = line.substr(pragma_beg + 8);
+      // TODO: Handle block comments (currently they cause a compilation error).
+      size_t comment_start = line_after_pragma.find("//");
+      std::string pragma_args = line_after_pragma.substr(0, comment_start);
+      std::string comment = comment_start != std::string::npos
+                                ? line_after_pragma.substr(comment_start)
+                                : "";
+      line = line.substr(0, pragma_beg) + "_Pragma(\"" + pragma_args + "\")" +
+             comment;
     }
 
     source += line + "\n";
@@ -804,7 +806,7 @@ inline std::string demangle_native_type(const std::type_info& typeinfo) {
   }
   throw std::runtime_error("UnDecorateSymbolName failed");
 }
-#else   // not MSVC
+#else  // not MSVC
 inline std::string demangle_cuda_symbol(const char* mangled_name) {
   size_t bufsize = 0;
   char* buf = nullptr;
@@ -885,7 +887,7 @@ struct type_reflection<NonType<T, VALUE> > {
 template <typename T>
 struct Instance {
   const T& value;
-  Instance(const T& value) : value(value) {}
+  Instance(const T& value_arg) : value(value_arg) {}
 };
 
 /*! Create an Instance object from which we can extract the value's run-time
@@ -967,14 +969,14 @@ inline std::string reflect(jitify::reflection::Instance<T>& value) {
  *  \param value The value whose type is to be captured.
  */
 template <typename T>
-inline Type<T> type_of(T& value) {
+inline Type<T> type_of(T&) {
   return Type<T>();
 }
 /*! Create a Type object representing a value's type.
  *  \param value The const value whose type is to be captured.
  */
 template <typename T>
-inline Type<T const> type_of(T const& value) {
+inline Type<T const> type_of(T const&) {
   return Type<T const>();
 }
 
@@ -1150,8 +1152,8 @@ class CUDAKernel {
           // Infer based on filename.
           jit_input_type = get_cuda_jit_input_type(&link_file);
         }
-        CUresult result = cuLinkAddFile(_link_state, jit_input_type,
-                                        link_file.c_str(), 0, 0, 0);
+        result = cuLinkAddFile(_link_state, jit_input_type, link_file.c_str(),
+                               0, 0, 0);
         int path_num = 0;
         while (result == CUDA_ERROR_FILE_NOT_FOUND &&
                path_num < (int)link_paths.size()) {
@@ -1297,6 +1299,24 @@ class CUDAKernel {
                           block.z, smem, stream, arg_ptrs.data(), NULL);
   }
 
+  inline void safe_launch(dim3 grid, dim3 block, unsigned int smem,
+                          CUstream stream, std::vector<void*> arg_ptrs) const {
+    return cuda_safe_call(cuLaunchKernel(_kernel, grid.x, grid.y, grid.z,
+                                         block.x, block.y, block.z, smem,
+                                         stream, arg_ptrs.data(), NULL));
+  }
+
+  inline int get_func_attribute(CUfunction_attribute attribute) const {
+    int value;
+    cuda_safe_call(cuFuncGetAttribute(&value, attribute, _kernel));
+    return value;
+  }
+
+  inline void set_func_attribute(CUfunction_attribute attribute,
+                                 int value) const {
+    cuda_safe_call(cuFuncSetAttribute(_kernel, attribute, value));
+  }
+
   inline CUdeviceptr get_global_ptr(const char* name,
                                     size_t* size = nullptr) const {
     CUdeviceptr global_ptr = 0;
@@ -1322,7 +1342,7 @@ class CUDAKernel {
           " has wrong size: got " + std::to_string(given_size_bytes) +
           " bytes, expected " + std::to_string(size_bytes));
     }
-    return cuMemcpyDtoH(data, ptr, size_bytes);
+    return cuMemcpyDtoHAsync(data, ptr, size_bytes, stream);
   }
 
   template <typename T>
@@ -1337,7 +1357,7 @@ class CUDAKernel {
           " has wrong size: got " + std::to_string(given_size_bytes) +
           " bytes, expected " + std::to_string(size_bytes));
     }
-    return cuMemcpyHtoD(ptr, data, size_bytes);
+    return cuMemcpyHtoDAsync(ptr, data, size_bytes, stream);
   }
 
   const std::string& function_name() const { return _func_name; }
@@ -1353,9 +1373,6 @@ static const char* jitsafe_header_preinclude_h = R"(
 //// WAR for Thrust (which appear to have forgotten to include this in error_code.h)
 //#include <string>
 
-// WAR for Thrust (which only supports gnuc, clang or msvc)
-#define __GNUC__ 4
-
 // WAR for generics/shfl.h
 #define THRUST_STATIC_ASSERT(x)
 
@@ -1369,7 +1386,6 @@ static const char* jitsafe_header_preinclude_h = R"(
 #define try
 #define catch(...)
 )";
-
 
 static const char* jitsafe_header_float_h = R"(
 #pragma once
@@ -1485,9 +1501,11 @@ struct iterator_traits<T const*> {
 //              using type specific structs since we can't template on floats.
 static const char* jitsafe_header_limits = R"(
 #pragma once
-#include <climits>
 #include <cfloat>
+#include <climits>
+#include <cstdint>
 // TODO: epsilon(), infinity(), etc
+namespace std {
 namespace __jitify_detail {
 #if __cplusplus >= 201103L
 #define JITIFY_CXX11_CONSTEXPR constexpr
@@ -1589,7 +1607,6 @@ struct IntegerLimits {
 	};
 };
 } // namespace __jitify_detail
-namespace std {
 template<typename T> struct numeric_limits {
     enum { is_specialized = false };
 };
@@ -1605,7 +1622,7 @@ template<> struct numeric_limits<unsigned char>      : public
 __jitify_detail::IntegerLimits<unsigned char,     0,        UCHAR_MAX> 
 {};
 template<> struct numeric_limits<wchar_t>            : public 
-__jitify_detail::IntegerLimits<wchar_t,           INT_MIN,  INT_MAX> {};
+__jitify_detail::IntegerLimits<wchar_t,           WCHAR_MIN, WCHAR_MAX> {};
 template<> struct numeric_limits<short>              : public 
 __jitify_detail::IntegerLimits<short,             SHRT_MIN, SHRT_MAX> 
 {};
@@ -1784,6 +1801,98 @@ static const char* jitsafe_header_type_traits = R"(
     template< class T > using decay_t = typename decay<T>::type;
     #endif
 
+    template<class T, T v>
+    struct integral_constant {
+    static constexpr T value = v;
+    typedef T value_type;
+    typedef integral_constant type; // using injected-class-name
+    constexpr operator value_type() const noexcept { return value; }
+    #if __cplusplus >= 201402L
+    constexpr value_type operator()() const noexcept { return value; }
+    #endif
+    };
+
+    template<class T> struct is_lvalue_reference : false_type {};
+    template<class T> struct is_lvalue_reference<T&> : true_type {};
+
+    template<class T> struct is_rvalue_reference : false_type {};
+    template<class T> struct is_rvalue_reference<T&&> : true_type {};
+
+    namespace __jitify_detail {
+    template <class T> struct type_identity { using type = T; };
+    template <class T> auto add_lvalue_reference(int) -> type_identity<T&>;
+    template <class T> auto add_lvalue_reference(...) -> type_identity<T>;
+    template <class T> auto add_rvalue_reference(int) -> type_identity<T&&>;
+    template <class T> auto add_rvalue_reference(...) -> type_identity<T>;
+    } // namespace _jitify_detail
+
+    template <class T> struct add_lvalue_reference : decltype(__jitify_detail::add_lvalue_reference<T>(0)) {};
+    template <class T> struct add_rvalue_reference : decltype(__jitify_detail::add_rvalue_reference<T>(0)) {};
+    #if __cplusplus >= 201402L
+    template <class T> using add_lvalue_reference_t = typename add_lvalue_reference<T>::type;
+    template <class T> using add_rvalue_reference_t = typename add_rvalue_reference<T>::type;
+    #endif
+
+    template<typename T> struct is_const          : public false_type {};
+    template<typename T> struct is_const<const T> : public true_type {};
+
+    template<typename T> struct is_volatile             : public false_type {};
+    template<typename T> struct is_volatile<volatile T> : public true_type {};
+
+    template<typename T> struct is_void             : public false_type {};
+    template<>           struct is_void<void>       : public true_type {};
+    template<>           struct is_void<const void> : public true_type {};
+
+    template<typename T> struct is_reference     : public false_type {};
+    template<typename T> struct is_reference<T&> : public true_type {};
+
+    template<typename _Tp, bool = (is_void<_Tp>::value || is_reference<_Tp>::value)>
+    struct __add_reference_helper { typedef _Tp&    type; };
+
+    template<typename _Tp> struct __add_reference_helper<_Tp, true> { typedef _Tp     type; };
+    template<typename _Tp> struct add_reference : public __add_reference_helper<_Tp>{};
+
+    namespace __jitify_detail {
+    template<typename T> struct is_int_or_cref {
+    typedef typename remove_reference<T>::type type_sans_ref;
+    static const bool value = (is_integral<T>::value || (is_integral<type_sans_ref>::value
+      && is_const<type_sans_ref>::value && !is_volatile<type_sans_ref>::value));
+    }; // end is_int_or_cref
+    template<typename From, typename To> struct is_convertible_sfinae {
+    private:
+    typedef char                          yes;
+    typedef struct { char two_chars[2]; } no;
+    static inline yes   test(To) { return yes(); }
+    static inline no    test(...) { return no(); }
+    static inline typename remove_reference<From>::type& from() { typename remove_reference<From>::type* ptr = 0; return *ptr; }
+    public:
+    static const bool value = sizeof(test(from())) == sizeof(yes);
+    }; // end is_convertible_sfinae
+    template<typename From, typename To> struct is_convertible_needs_simple_test {
+    static const bool from_is_void      = is_void<From>::value;
+    static const bool to_is_void        = is_void<To>::value;
+    static const bool from_is_float     = is_floating_point<typename remove_reference<From>::type>::value;
+    static const bool to_is_int_or_cref = is_int_or_cref<To>::value;
+    static const bool value = (from_is_void || to_is_void || (from_is_float && to_is_int_or_cref));
+    }; // end is_convertible_needs_simple_test
+    template<typename From, typename To, bool = is_convertible_needs_simple_test<From,To>::value>
+    struct is_convertible {
+    static const bool value = (is_void<To>::value || (is_int_or_cref<To>::value && !is_void<From>::value));
+    }; // end is_convertible
+    template<typename From, typename To> struct is_convertible<From, To, false> {
+    static const bool value = (is_convertible_sfinae<typename add_reference<From>::type, To>::value);
+    }; // end is_convertible
+    } // end __jitify_detail
+    // implementation of is_convertible taken from thrust's pre C++11 path
+    template<typename From, typename To> struct is_convertible
+    : public integral_constant<bool, __jitify_detail::is_convertible<From, To>::value>
+    { }; // end is_convertible
+
+    template<class A, class B> struct is_base_of { };
+
+    template<size_t len, size_t alignment> struct aligned_storage { struct type { alignas(alignment) char data[len]; }; };
+    template <class T> struct alignment_of : std::integral_constant<size_t,alignof(T)> {};
+
     }  // namespace std
     #endif // c++11
 )";
@@ -1820,9 +1929,17 @@ static const char* jitsafe_header_stdint_h =
     "typedef unsigned int       uint_least32_t;\n"
     "typedef unsigned long long uint_least64_t;\n"
     "typedef unsigned long long uintmax_t;\n"
-    "typedef unsigned long      uintptr_t; //optional\n"
     "#define INT8_MIN    SCHAR_MIN\n"
     "#define INT16_MIN   SHRT_MIN\n"
+    "#if defined _WIN32 || defined _WIN64\n"
+    "#define WCHAR_MIN   SHRT_MIN\n"
+    "#define WCHAR_MAX   SHRT_MAX\n"
+    "typedef unsigned long long uintptr_t; //optional\n"
+    "#else\n"
+    "#define WCHAR_MIN   INT_MIN\n"
+    "#define WCHAR_MAX   INT_MAX\n"
+    "typedef unsigned long      uintptr_t; //optional\n"
+    "#endif\n"
     "#define INT32_MIN   INT_MIN\n"
     "#define INT64_MIN   LLONG_MIN\n"
     "#define INT8_MAX    SCHAR_MAX\n"
@@ -2201,20 +2318,32 @@ static const char* jitsafe_header_time_h = R"(
     using namespace __jitify_time_ns;
  )";
 
+static const char* jitsafe_header_tuple = R"(
+    #pragma once
+    #if __cplusplus >= 201103L
+    namespace std {
+    template<class... Types > class tuple;
+    } // namespace std
+    #endif
+ )";
+
+static const char* jitsafe_header_assert = R"(
+    #pragma once
+ )";
+
 // WAR: These need to be pre-included as a workaround for NVRTC implicitly using
 // /usr/include as an include path. The other built-in headers will be included
 // lazily as needed.
-static const char* preinclude_jitsafe_header_names[] = {
-    "jitify_preinclude.h",
-    "limits.h",
-    "math.h",
-    "memory.h",
-    "stdint.h",
-    "stdlib.h",
-    "stdio.h",
-    "string.h",
-    "time.h",
-};
+static const char* preinclude_jitsafe_header_names[] = {"jitify_preinclude.h",
+                                                        "limits.h",
+                                                        "math.h",
+                                                        "memory.h",
+                                                        "stdint.h",
+                                                        "stdlib.h",
+                                                        "stdio.h",
+                                                        "string.h",
+                                                        "time.h",
+                                                        "assert.h"};
 
 template <class T, int N>
 int array_size(T (&)[N]) {
@@ -2259,7 +2388,9 @@ static const std::map<std::string, std::string>& get_jitsafe_headers_map() {
       {"algorithm", jitsafe_header_algorithm},
       {"time.h", jitsafe_header_time_h},
       {"ctime", jitsafe_header_time_h},
-  };
+      {"tuple", jitsafe_header_tuple},
+      {"assert.h", jitsafe_header_assert},
+      {"cassert", jitsafe_header_assert}};
   return jitsafe_headers_map;
 }
 
@@ -2512,12 +2643,12 @@ inline nvrtcResult compile_kernel(std::string program_name,
   }
 #endif
 
-#define CHECK_NVRTC(call)       \
-  do {                          \
-    nvrtcResult ret = call;     \
-    if (ret != NVRTC_SUCCESS) { \
-      return ret;               \
-    }                           \
+#define CHECK_NVRTC(call)                         \
+  do {                                            \
+    nvrtcResult check_nvrtc_macro_ret = call;     \
+    if (check_nvrtc_macro_ret != NVRTC_SUCCESS) { \
+      return check_nvrtc_macro_ret;               \
+    }                                             \
   } while (0)
 
   nvrtcProgram nvrtc_program;
@@ -2903,6 +3034,13 @@ class KernelLauncher_impl {
   inline CUresult launch(
       jitify::detail::vector<void*> arg_ptrs,
       jitify::detail::vector<std::string> arg_types = 0) const;
+  inline void safe_launch(
+      jitify::detail::vector<void*> arg_ptrs,
+      jitify::detail::vector<std::string> arg_types = 0) const;
+
+ private:
+  inline void pre_launch(
+      jitify::detail::vector<std::string> arg_types = 0) const;
 };
 
 /*! An object representing a configured and instantiated kernel ready
@@ -2932,13 +3070,24 @@ class KernelLauncher {
       jitify::detail::vector<std::string> arg_types = 0) const {
     return _impl->launch(arg_ptrs, arg_types);
   }
+
+  /*! Launch the kernel and check for cuda errors.
+   *
+   *  \see launch
+   */
+  inline void safe_launch(
+      std::vector<void*> arg_ptrs = std::vector<void*>(),
+      jitify::detail::vector<std::string> arg_types = 0) const {
+    _impl->safe_launch(arg_ptrs, arg_types);
+  }
+
   // Regular function call syntax
   /*! Launch the kernel.
    *
    *  \see launch
    */
   template <typename... ArgTypes>
-  inline CUresult operator()(ArgTypes... args) const {
+  inline CUresult operator()(const ArgTypes&... args) const {
     return this->launch(args...);
   }
   /*! Launch the kernel.
@@ -2946,9 +3095,18 @@ class KernelLauncher {
    *  \param args Function arguments for the kernel.
    */
   template <typename... ArgTypes>
-  inline CUresult launch(ArgTypes... args) const {
+  inline CUresult launch(const ArgTypes&... args) const {
     return this->launch(std::vector<void*>({(void*)&args...}),
                         {reflection::reflect<ArgTypes>()...});
+  }
+  /*! Launch the kernel and check for cuda errors.
+   *
+   *  \param args Function arguments for the kernel.
+   */
+  template <typename... ArgTypes>
+  inline void safe_launch(const ArgTypes&... args) const {
+    this->safe_launch(std::vector<void*>({(void*)&args...}),
+                      {reflection::reflect<ArgTypes>()...});
   }
 };
 
@@ -3010,6 +3168,21 @@ class KernelInstantiation {
     detail::get_1d_max_occupancy(func, smem_callback, &smem, max_block_size,
                                  flags, &grid, &block);
     return this->configure(grid, block, smem, stream);
+  }
+
+  /*
+   * Returns the function attribute requested from the kernel
+   */
+  inline int get_func_attribute(CUfunction_attribute attribute) const {
+    return _impl->cuda_kernel().get_func_attribute(attribute);
+  }
+
+  /*
+   * Set the function attribute requested for the kernel
+   */
+  inline void set_func_attribute(CUfunction_attribute attribute,
+                                 int value) const {
+    _impl->cuda_kernel().set_func_attribute(attribute, value);
   }
 
   /*
@@ -3273,9 +3446,9 @@ inline std::ostream& operator<<(std::ostream& stream, dim3 d) {
   return stream;
 }
 
-inline CUresult KernelLauncher_impl::launch(
-    jitify::detail::vector<void*> arg_ptrs,
+inline void KernelLauncher_impl::pre_launch(
     jitify::detail::vector<std::string> arg_types) const {
+  (void)arg_types;
 #if JITIFY_PRINT_LAUNCH
   Kernel_impl const& kernel = _kernel_inst._kernel;
   std::string arg_types_string =
@@ -3289,8 +3462,22 @@ inline CUresult KernelLauncher_impl::launch(
     throw std::runtime_error(
         "Kernel pointer is NULL; you may need to define JITIFY_THREAD_SAFE 1");
   }
+}
+
+inline CUresult KernelLauncher_impl::launch(
+    jitify::detail::vector<void*> arg_ptrs,
+    jitify::detail::vector<std::string> arg_types) const {
+  pre_launch(arg_types);
   return _kernel_inst._cuda_kernel->launch(_grid, _block, _smem, _stream,
                                            arg_ptrs);
+}
+
+inline void KernelLauncher_impl::safe_launch(
+    jitify::detail::vector<void*> arg_ptrs,
+    jitify::detail::vector<std::string> arg_types) const {
+  pre_launch(arg_types);
+  _kernel_inst._cuda_kernel->safe_launch(_grid, _block, _smem, _stream,
+                                         arg_ptrs);
 }
 
 inline KernelInstantiation_impl::KernelInstantiation_impl(
@@ -3616,16 +3803,26 @@ namespace detail {
 
 // This should be incremented whenever the serialization format changes in any
 // incompatible way.
-static constexpr const size_t kSerializationVersion = 1;
+static constexpr const size_t kSerializationVersion = 2;
 
 inline void serialize(std::ostream& stream, size_t u) {
   uint64_t u64 = u;
-  stream.write(reinterpret_cast<char*>(&u64), sizeof(u64));
+  char bytes[8];
+  for (int i = 0; i < (int)sizeof(bytes); ++i) {
+    // Convert to little-endian bytes.
+    bytes[i] = (unsigned char)(u64 >> (i * CHAR_BIT));
+  }
+  stream.write(bytes, sizeof(bytes));
 }
 
 inline bool deserialize(std::istream& stream, size_t* size) {
-  uint64_t u64;
-  stream.read(reinterpret_cast<char*>(&u64), sizeof(u64));
+  char bytes[8];
+  stream.read(bytes, sizeof(bytes));
+  uint64_t u64 = 0;
+  for (int i = 0; i < (int)sizeof(bytes); ++i) {
+    // Convert from little-endian bytes.
+    u64 |= uint64_t((unsigned char)(bytes[i])) << (i * CHAR_BIT);
+  }
   *size = u64;
   return stream.good();
 }
@@ -4003,6 +4200,21 @@ class KernelInstantiation {
       unsigned int flags = 0) const;
 
   /*
+   * Returns the function attribute requested from the kernel
+   */
+  inline int get_func_attribute(CUfunction_attribute attribute) const {
+    return _cuda_kernel->get_func_attribute(attribute);
+  }
+
+  /*
+   * Set the function attribute requested for the kernel
+   */
+  inline void set_func_attribute(CUfunction_attribute attribute,
+                                 int value) const {
+    _cuda_kernel->set_func_attribute(attribute, value);
+  }
+
+  /*
    * \deprecated Use \p get_global_ptr instead.
    */
   CUdeviceptr get_constant_ptr(const char* name, size_t* size = nullptr) const {
@@ -4080,6 +4292,19 @@ class KernelLauncher {
   unsigned int _smem;
   cudaStream_t _stream;
 
+ private:
+  void pre_launch(std::vector<std::string> arg_types = {}) const {
+    (void)arg_types;
+#if JITIFY_PRINT_LAUNCH
+    std::string arg_types_string =
+        (arg_types.empty() ? "..." : reflection::reflect_list(arg_types));
+    std::cout << "Launching " << _kernel_inst->_cuda_kernel->function_name()
+              << "<<<" << _grid << "," << _block << "," << _smem << ","
+              << _stream << ">>>"
+              << "(" << arg_types_string << ")" << std::endl;
+#endif
+  }
+
  public:
   KernelLauncher(KernelInstantiation const* kernel_inst, dim3 grid, dim3 block,
                  unsigned int smem = 0, cudaStream_t stream = 0)
@@ -4102,16 +4327,16 @@ class KernelLauncher {
    */
   CUresult launch(std::vector<void*> arg_ptrs = {},
                   std::vector<std::string> arg_types = {}) const {
-#if JITIFY_PRINT_LAUNCH
-    std::string arg_types_string =
-        (arg_types.empty() ? "..." : reflection::reflect_list(arg_types));
-    std::cout << "Launching " << _kernel_inst->_cuda_kernel->function_name()
-              << "<<<" << _grid << "," << _block << "," << _smem << ","
-              << _stream << ">>>"
-              << "(" << arg_types_string << ")" << std::endl;
-#endif
+    pre_launch(arg_types);
     return _kernel_inst->_cuda_kernel->launch(_grid, _block, _smem, _stream,
                                               arg_ptrs);
+  }
+
+  void safe_launch(std::vector<void*> arg_ptrs = {},
+                   std::vector<std::string> arg_types = {}) const {
+    pre_launch(arg_types);
+    _kernel_inst->_cuda_kernel->safe_launch(_grid, _block, _smem, _stream,
+                                            arg_ptrs);
   }
 
   /*! Launch the kernel.
@@ -4119,9 +4344,19 @@ class KernelLauncher {
    *  \param args Function arguments for the kernel.
    */
   template <typename... ArgTypes>
-  CUresult launch(ArgTypes... args) const {
+  CUresult launch(const ArgTypes&... args) const {
     return this->launch(std::vector<void*>({(void*)&args...}),
                         {reflection::reflect<ArgTypes>()...});
+  }
+
+  /*! Launch the kernel and check for cuda errors.
+   *
+   *  \param args Function arguments for the kernel.
+   */
+  template <typename... ArgTypes>
+  void safe_launch(const ArgTypes&... args) const {
+    return this->safe_launch(std::vector<void*>({(void*)&args...}),
+                             {reflection::reflect<ArgTypes>()...});
   }
 };
 
