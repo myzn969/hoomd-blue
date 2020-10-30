@@ -335,6 +335,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                     && test_overlap(r_ij, shape_test, shape_i, err_count));
 
                 overlap_i = hoomd::detail::WarpReduce<bool, eval_threads>().Sum(overlap_i);
+                overlap_i = hoomd::detail::WarpScan<bool, eval_threads>().Broadcast(overlap_i, 0);
 
                 // Mayer f-function
                 Scalar f_i = 0.0;
