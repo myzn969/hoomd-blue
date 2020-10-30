@@ -89,7 +89,12 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
 
             unsigned int tpp = std::min(args.tpp,block_size);
             tpp = std::min((unsigned int) args.devprop.maxThreadsDim[2], tpp); // clamp blockDim.z
-            unsigned int n_groups = block_size / tpp;
+            while (eval_threads*tpp > block_size || block_size % (eval_threads*tpp) != 0)
+                {
+                tpp--;
+                }
+
+            unsigned int n_groups = block_size / (tpp*eval_threads);
 
             unsigned int max_queue_size = n_groups*tpp;
             unsigned int max_depletant_queue_size = n_groups;
@@ -114,8 +119,13 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
                 if (block_size == 0)
                     throw std::runtime_error("Insufficient shared memory for HPMC kernel");
                 tpp = std::min(tpp, block_size);
+                while (eval_threads*tpp > block_size || block_size % (eval_threads*tpp) != 0)
+                    {
+                    tpp--;
+                    }
+
                 tpp = std::min((unsigned int) args.devprop.maxThreadsDim[2], tpp); // clamp blockDim.z
-                n_groups = block_size / tpp;
+                n_groups = block_size / (tpp*eval_threads);
 
                 max_queue_size = n_groups*tpp;
                 max_depletant_queue_size = n_groups;
@@ -212,7 +222,6 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
                                      max_queue_size,
                                      max_extra_bytes,
                                      implicit_args.depletant_type_a,
-                                     implicit_args.depletant_type_b,
                                      implicit_args.depletant_idx,
                                      implicit_args.d_implicit_count + idev*implicit_args.implicit_counters_pitch,
                                      args.d_update_order_by_ptl,
@@ -430,7 +439,6 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITUnionGPU> : public J
                                      max_queue_size,
                                      max_extra_bytes,
                                      implicit_args.depletant_type_a,
-                                     implicit_args.depletant_type_b,
                                      implicit_args.depletant_idx,
                                      implicit_args.d_implicit_count + idev*implicit_args.implicit_counters_pitch,
                                      args.d_update_order_by_ptl,

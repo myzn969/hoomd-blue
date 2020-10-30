@@ -102,9 +102,9 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
     // shared particle configuation
     __shared__ Scalar4 s_cur_orientation_i;
     __shared__ Scalar3 s_cur_pos_i;
-    __shared__ unsigned int s_type_i;
     __shared__ Scalar s_charge_i;
     __shared__ Scalar s_diameter_i;
+    __shared__ unsigned int s_type_i;
 
     // shared arrays for per type pair parameters
     __shared__ unsigned int s_overlap_checks;
@@ -229,6 +229,8 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
         s_cur_pos_i = make_scalar3(cur_postype.x, cur_postype.y, cur_postype.z);
         s_type_i = __scalar_as_int(cur_postype.w);
         s_cur_orientation_i = new_config ? d_trial_orientation[i] : d_orientation[i];
+        s_charge_i = d_charge[i];
+        s_diameter_i = d_diameter[i];
         }
 
     // sync so that s_cur_pos_i etc. are available

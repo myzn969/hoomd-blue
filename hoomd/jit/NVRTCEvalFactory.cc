@@ -36,6 +36,9 @@ void NVRTCEvalFactory::compileGPU(
         "-D__HIPCC__",
         "-D__HIP_DEVICE_COMPILE__",
         "-D__HIP_PLATFORM_NVCC__"
+#ifdef DEBUG_JIT
+        ,"--generate-line-info"
+#endif
         };
 
     for (auto p: options)

@@ -105,9 +105,9 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
     __shared__ Scalar4 s_orientation_i_old;
     __shared__ Scalar3 s_pos_i_new;
     __shared__ Scalar3 s_pos_i_old;
-    __shared__ unsigned int s_type_i;
     __shared__ Scalar s_charge_i;
     __shared__ Scalar s_diameter_i;
+    __shared__ unsigned int s_type_i;
 
     // shared arrays for per type pair parameters
     __shared__ unsigned int s_overlap_checks;
@@ -178,9 +178,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
             for (unsigned int cur_offset = 0; cur_offset < num_types; cur_offset += block_size)
                 {
                 if (cur_offset + tidx < num_types)
-                    {
                     s_additive_cutoff[cur_offset + tidx] = d_additive_cutoff[cur_offset + tidx];
-                    }
                 }
             }
         }

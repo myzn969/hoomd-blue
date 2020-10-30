@@ -2562,7 +2562,7 @@ void IntegratorHPMCMonoGPU< Shape >::slotNumTypesChange()
                 }
             }
 
-        GlobalArray<Scalar> additive_cutoff(ntypes*ntypes, this->m_exec_conf);
+        GlobalArray<Scalar> additive_cutoff(ntypes, this->m_exec_conf);
         m_additive_cutoff.swap(additive_cutoff);
         TAG_ALLOCATION(m_additive_cutoff);
         }
