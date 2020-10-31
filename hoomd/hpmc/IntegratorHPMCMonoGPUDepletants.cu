@@ -48,7 +48,7 @@ __global__ void generate_num_depletants(const unsigned int seed,
 //! Generate number of depletants per particle (ntrial version)
 __global__ void generate_num_depletants_ntrial(const Scalar4 *d_vel,
                                         const Scalar4 *d_trial_vel,
-                                        const unsigned int ntrial,
+                                        const float gamma,
                                         const unsigned int depletant_type_a,
                                         const unsigned int depletant_type_b,
                                         const Index2D depletant_idx,
@@ -67,7 +67,6 @@ __global__ void generate_num_depletants_ntrial(const Scalar4 *d_vel,
     unsigned int i = idx + work_offset;
 
     unsigned int i_trial_config = blockIdx.y;
-    unsigned int i_trial = (i_trial_config >> 1)%ntrial;
     unsigned int new_config = i_trial_config & 1;
 
     if (i >= N_local && new_config)
@@ -76,14 +75,14 @@ __global__ void generate_num_depletants_ntrial(const Scalar4 *d_vel,
     // draw a Poisson variate according to the seed stored in the auxillary variable (vel.x)
     unsigned int seed_i = new_config ? __scalar_as_int(d_trial_vel[i].x) : __scalar_as_int(d_vel[i].x);
     hoomd::RandomGenerator rng_num(hoomd::RNGIdentifier::HPMCDepletantNum,
-        depletant_idx(depletant_type_a, depletant_type_b), seed_i, i_trial);
+        depletant_idx(depletant_type_a, depletant_type_b), seed_i);
 
     unsigned int type_i = __scalar_as_int(d_postype[i].w);
     Scalar lambda = d_lambda[type_i*depletant_idx.getNumElements()+depletant_idx(depletant_type_a,depletant_type_b)];
-    unsigned int n = hoomd::PoissonDistribution<Scalar>(lambda)(rng_num);
+    unsigned int n = hoomd::PoissonDistribution<Scalar>(gamma*lambda)(rng_num);
 
     // store result
-    d_n_depletants[i*2*ntrial+new_config*ntrial+i_trial] = n;
+    d_n_depletants[2*i+new_config] = n;
     }
 
 __global__ void hpmc_reduce_counters(const unsigned int ngpu,
@@ -152,7 +151,7 @@ void generate_num_depletants(const unsigned int seed,
 
 void generate_num_depletants_ntrial(const Scalar4 *d_vel,
                                     const Scalar4 *d_trial_vel,
-                                    const unsigned int ntrial,
+                                    const float gamma,
                                     const unsigned int depletant_type_a,
                                     const unsigned int depletant_type_b,
                                     const Index2D depletant_idx,
@@ -189,13 +188,13 @@ void generate_num_depletants_ntrial(const Scalar4 *d_vel,
 
         if (!nwork) continue;
 
-        dim3 grid(nwork/run_block_size + 1, 2*ntrial, 1);
+        dim3 grid(nwork/run_block_size + 1, 2, 1);
         dim3 threads(run_block_size, 1, 1);
 
         hipLaunchKernelGGL((kernel::generate_num_depletants_ntrial), grid, threads, 0, streams[idev],
             d_vel,
             d_trial_vel,
-            ntrial,
+            gamma,
             depletant_type_a,
             depletant_type_b,
             depletant_idx,
@@ -233,7 +232,7 @@ void get_max_num_depletants(unsigned int *d_n_depletants,
     }
 
 //! Compute the max # of depletants per particle, trial insertion, and configuration
-void get_max_num_depletants_ntrial(const unsigned int ntrial,
+void get_max_num_depletants_ntrial(const float gamma,
                             unsigned int *d_n_depletants,
                             unsigned int *max_n_depletants,
                             const bool add_ghosts,
@@ -259,8 +258,8 @@ void get_max_num_depletants_ntrial(const unsigned int ntrial,
         #else
         max_n_depletants[idev] = thrust::reduce(thrust::cuda::par(alloc).on(streams[idev]),
         #endif
-            n_depletants + range.first*2*ntrial,
-            n_depletants + (range.first+nwork)*2*ntrial,
+            n_depletants + range.first*2,
+            n_depletants + (range.first+nwork)*2,
             0,
             thrust::maximum<unsigned int>());
         }

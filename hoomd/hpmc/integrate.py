@@ -293,7 +293,7 @@ class mode_hpmc(_integrator):
                    a=None,
                    move_ratio=None,
                    nselect=None,
-                   ntrial=None,
+                   gamma=None,
                    deterministic=None):
         R""" Changes parameters of an existing integration mode.
 
@@ -302,7 +302,7 @@ class mode_hpmc(_integrator):
             a (float): (if set) Maximum rotation move, Scalar to set for all types, or a dict containing {type:size} to set by type.
             move_ratio (float): (if set) New value for the move ratio.
             nselect (int): (if set) New value for the number of particles to select for trial moves in one cell.
-            ntrial (int): (if set) Number of re-insertion attempts per overlapping depletant (default == 0), or a dict containing {(type_a,type_b): ntrial}
+            gamma (float): (if set) Multiplier for the depletants sampling density (default == 0), or a dict containing {(type_a,type_b): gamma}
             deterministic (bool): (if set) Make HPMC integration deterministic on the GPU by sorting the cell list.
 
         .. note:: Simulations are only deterministic with respect to the same execution configuration (CPU or GPU) and
@@ -337,16 +337,16 @@ class mode_hpmc(_integrator):
         if nselect is not None:
             self.cpp_integrator.setNSelect(nselect);
 
-        if ntrial is not None:
-            if isinstance(ntrial, dict):
-                for t,t_ntrial in ntrial.items():
+        if gamma is not None:
+            if isinstance(gamma, dict):
+                for t,t_gamma in gamma.items():
                     type_a = hoomd.context.current.system_definition.getParticleData().getTypeByName(t[0])
                     type_b = hoomd.context.current.system_definition.getParticleData().getTypeByName(t[1])
-                    self.cpp_integrator.setNTrial(type_a,type_b,int(t_ntrial))
+                    self.cpp_integrator.setGamma(type_a,type_b,float(t_gamma))
             else:
                 for i in range(hoomd.context.current.system_definition.getParticleData().getNTypes()):
                     for j in range(hoomd.context.current.system_definition.getParticleData().getNTypes()):
-                        self.cpp_integrator.setNTrial(i,j,int(ntrial));
+                        self.cpp_integrator.setGamma(i,j,float(gamma));
 
         if deterministic is not None:
             self.cpp_integrator.setDeterministic(deterministic);
@@ -622,20 +622,20 @@ class mode_hpmc(_integrator):
         itype_b = hoomd.context.current.system_definition.getParticleData().getTypeByName(type_b)
         return self.cpp_integrator.getDepletantFugacity(itype_a,itype_b);
 
-    def get_ntrial(self, type_a=None, type_b=None):
+    def get_gamma(self, type_a=None, type_b=None):
         R""" Get the number of reinsertion attempts per overlapping depletant
 
         Returns:
-            The current value of the 'ntrial' parameter of the integrator
+            The current value of the 'gamma' parameter of the integrator
         """
         if type_a is None and type_b is None:
-            return self.cpp_integrator.getNTrial(0,0);
+            return self.cpp_integrator.getGamma(0,0);
         else:
             if type_b is None:
                 type_b = type_a
             itype_a = hoomd.context.current.system_definition.getParticleData().getTypeByName(type_a)
             itype_b = hoomd.context.current.system_definition.getParticleData().getTypeByName(type_b)
-            return self.cpp_integrator.getNTrial(itype_a,itype_b);
+            return self.cpp_integrator.getGamma(itype_a,itype_b);
 
     def get_insertion_std(self, type=None):
         R""" Get the standard deviation of insertion attempts

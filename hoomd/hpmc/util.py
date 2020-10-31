@@ -652,12 +652,6 @@ class tune(object):
                                                      'set': lambda x: getattr(obj, 'set_params')(a=x),
                                                      'maximum': 0.5
                                                       }})
-                tunable_map.update({'ntrial':   {
-                                        'get': lambda: getattr(obj, 'get_ntrial')(),
-                                        'acceptance': lambda: getattr(obj, 'get_insertion_std')(),
-                                        'set': lambda x: getattr(obj, 'set_params')(ntrial=x),
-                                        'maximum': 10000
-                                        }})
             else:
                 tunable_map.update({'d': {
                                                  'get': lambda: getattr(obj, 'get_d')(type),
@@ -671,13 +665,6 @@ class tune(object):
                                                  'set': lambda x: getattr(obj, 'set_params')(a={type: x}),
                                                  'maximum': 0.5
                                                  }})
-
-                tunable_map.update({'ntrial':   {
-                                        'get': lambda: getattr(obj, 'get_ntrial')(type),
-                                        'acceptance': lambda: getattr(obj, 'get_insertion_std')(type),
-                                        'set': lambda x: getattr(obj, 'set_params')(ntrial={type: x}),
-                                        'maximum': 10000
-                                        }})
         #init rest of tuner
         self.target = float(target)
         self.max_scale = float(max_scale)

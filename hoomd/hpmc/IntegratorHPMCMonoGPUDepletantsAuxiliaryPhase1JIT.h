@@ -105,7 +105,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
 
             unsigned int shared_bytes = n_groups *(sizeof(Scalar4) + sizeof(Scalar3) + sizeof(unsigned int)) +
                                         max_queue_size*2*sizeof(unsigned int) +
-                                        max_depletant_queue_size*(2*sizeof(unsigned int) + sizeof(float)) +
+                                        max_depletant_queue_size*(sizeof(unsigned int) + sizeof(float)) +
                                         n_groups*auxiliary_args.max_len*(sizeof(unsigned int) + sizeof(float)) +
                                         min_shared_bytes;
 
@@ -132,7 +132,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
 
                 shared_bytes = n_groups * (sizeof(Scalar4) + sizeof(Scalar3) + sizeof(unsigned int)) +
                                max_queue_size*2*sizeof(unsigned int) +
-                               max_depletant_queue_size*(2*sizeof(unsigned int) + sizeof(float)) +
+                               max_depletant_queue_size*(sizeof(unsigned int) + sizeof(float)) +
                                n_groups*auxiliary_args.max_len*(sizeof(unsigned int) + sizeof(float)) +
                                min_shared_bytes;
                 }
@@ -225,7 +225,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
                                      implicit_args.depletant_idx,
                                      implicit_args.d_implicit_count + idev*implicit_args.implicit_counters_pitch,
                                      args.d_update_order_by_ptl,
-                                     auxiliary_args.ntrial,
+                                     auxiliary_args.gamma,
                                      auxiliary_args.d_tag,
                                      auxiliary_args.d_vel,
                                      auxiliary_args.d_trial_vel,
@@ -244,7 +244,6 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITGPU> : public JITDep
                                      auxiliary_args.d_req_len,
                                      auxiliary_args.work_offset[idev],
                                      auxiliary_args.nwork_local[idev],
-                                     implicit_args.max_n_depletants[idev],
                                      args.d_type_params,
                                      auxiliary_args.r_cut_patch,
                                      auxiliary_args.d_additive_cutoff,
@@ -325,7 +324,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITUnionGPU> : public J
 
             unsigned int shared_bytes = n_groups *(sizeof(Scalar4) + sizeof(Scalar3) + sizeof(unsigned int)) +
                                         max_queue_size*2*sizeof(unsigned int) +
-                                        max_depletant_queue_size*(2*sizeof(unsigned int) + sizeof(float)) +
+                                        max_depletant_queue_size*(sizeof(unsigned int) + sizeof(float)) +
                                         n_groups*auxiliary_args.max_len*(sizeof(unsigned int) + sizeof(float)) +
                                         min_shared_bytes;
 
@@ -352,7 +351,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITUnionGPU> : public J
 
                 shared_bytes = n_groups * (sizeof(Scalar4) + sizeof(Scalar3) + sizeof(unsigned int)) +
                                max_queue_size*2*sizeof(unsigned int) +
-                               max_depletant_queue_size*(2*sizeof(unsigned int) + sizeof(float)) +
+                               max_depletant_queue_size*(sizeof(unsigned int) + sizeof(float)) +
                                n_groups*auxiliary_args.max_len*(sizeof(unsigned int) + sizeof(float)) +
                                min_shared_bytes;
                 }
@@ -452,7 +451,7 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITUnionGPU> : public J
                                      implicit_args.depletant_idx,
                                      implicit_args.d_implicit_count + idev*implicit_args.implicit_counters_pitch,
                                      args.d_update_order_by_ptl,
-                                     auxiliary_args.ntrial,
+                                     auxiliary_args.gamma,
                                      auxiliary_args.d_tag,
                                      auxiliary_args.d_vel,
                                      auxiliary_args.d_trial_vel,
@@ -471,7 +470,6 @@ class JITDepletantsAuxiliaryPhase1Impl<Shape, PatchEnergyJITUnionGPU> : public J
                                      auxiliary_args.d_req_len,
                                      auxiliary_args.work_offset[idev],
                                      auxiliary_args.nwork_local[idev],
-                                     implicit_args.max_n_depletants[idev],
                                      args.d_type_params,
                                      auxiliary_args.r_cut_patch,
                                      auxiliary_args.d_additive_cutoff,

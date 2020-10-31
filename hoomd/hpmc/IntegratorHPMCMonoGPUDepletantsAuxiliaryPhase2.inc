@@ -63,7 +63,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                                      unsigned int depletant_type,
                                      const Index2D depletant_idx,
                                      hpmc_implicit_counters_t *d_implicit_counters,
-                                     const unsigned int ntrial,
+                                     const float ntrial,
                                      const unsigned int *d_tag,
                                      const Scalar4 *d_vel,
                                      const Scalar4 *d_trial_vel,
@@ -83,7 +83,6 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                                      unsigned int *d_req_len,
                                      const unsigned int global_work_offset,
                                      const unsigned int n_work_local,
-                                     const unsigned int max_n_depletants,
                                      const unsigned int *d_type_params,
                                      const Scalar r_cut_patch,
                                      const Scalar *d_additive_cutoff,
@@ -131,8 +130,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
     unsigned int *s_queue_j = (unsigned int*)(s_energy_list + max_len*n_groups);
     unsigned int *s_queue_gid = (unsigned int*)(s_queue_j + max_queue_size);
     unsigned int *s_queue_didx = (unsigned int *)(s_queue_gid + max_queue_size);
-    unsigned int *s_queue_itrial = (unsigned int *)(s_queue_didx + max_depletant_queue_size);
-    float *s_queue_f = (float *)(s_queue_itrial + max_depletant_queue_size);
+    float *s_queue_f = (float *)(s_queue_didx + max_depletant_queue_size);
 
     // copy over parameters one int per thread for fast loads
         {
@@ -293,22 +291,20 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
     while (s_adding_depletants)
         {
         // compute global indices
-        unsigned int global_work_idx = global_work_offset + local_work_idx;
-        unsigned int i_dep = global_work_idx % max_n_depletants;
-        unsigned int i_trial = global_work_idx/max_n_depletants;
+        unsigned int i_dep = global_work_offset + local_work_idx;
 
         // load random number of depletants from Poisson distribution
-        unsigned int n_depletants_i = d_n_depletants[i*2*ntrial+new_config*ntrial+i_trial];
+        unsigned int n_depletants_i = d_n_depletants[2*i+new_config];
 
         if (i_dep == 0) n_depletants += n_depletants_i;
 
         while (s_depletant_queue_size < max_depletant_queue_size && local_work_idx < n_work_local)
             {
-            if (i_dep < n_depletants_i && i_trial < ntrial)
+            if (i_dep < n_depletants_i)
                 {
                 // one RNG per depletant and trial insertion
                 hoomd::RandomGenerator rng(hoomd::RNGIdentifier::HPMCDepletants, cur_seed_i,
-                    i_dep, i_trial, depletant_type);
+                    i_dep, depletant_type);
 
                 // filter depletants overlapping with particle i
                 vec3<Scalar> pos_test = vec3<Scalar>(generatePositionInOBB(rng, obb_i, dim));
@@ -404,7 +400,6 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                         if (threadIdx.x == 0)
                             {
                             s_queue_didx[insert_point] = i_dep;
-                            s_queue_itrial[insert_point] = i_trial;
                             s_queue_f[insert_point] = f_i;
                             }
                         }
@@ -419,10 +414,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
             local_work_idx += group_size*n_groups*blocks_per_depletant;
 
             // compute new global index
-            global_work_idx = global_work_offset + local_work_idx;
-            i_dep = global_work_idx % max_n_depletants;
-            i_trial = global_work_idx/max_n_depletants;
-            n_depletants_i = d_n_depletants[i*2*ntrial+new_config*ntrial+i_trial];
+            i_dep = global_work_offset + local_work_idx;
             } // end while (s_depletant_queue_size < max_depletant_queue_size && i_dep < n_depletants_i)
 
         __syncthreads();
@@ -448,11 +440,9 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
             // regenerate depletant using seed from queue, this costs a few flops but is probably
             // better than storing one Scalar4 and a Scalar3 per thread in shared mem
             unsigned int i_dep_queue = s_queue_didx[group];
-            unsigned int i_trial_queue = s_queue_itrial[group];
 
             hoomd::RandomGenerator rng(hoomd::RNGIdentifier::HPMCDepletants,
-                cur_seed_i, i_dep_queue, i_trial_queue,
-                depletant_type);
+                cur_seed_i, i_dep_queue, depletant_type);
 
             // depletant position and orientation
             vec3<Scalar> pos_test = vec3<Scalar>(generatePositionInOBB(rng, obb_i, dim));

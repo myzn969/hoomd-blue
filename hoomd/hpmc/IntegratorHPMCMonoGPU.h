@@ -929,15 +929,15 @@ void IntegratorHPMCMonoGPU< Shape >::updateGPUAdvice()
                     cudaMemPrefetchAsync(m_n_depletants.get()+this->m_depletant_idx(itype,jtype)*this->m_pdata->getMaxN()+range.first,
                         sizeof(unsigned int)*nelem, gpu_map[idev]);
 
-                    unsigned int ntrial = this->m_ntrial[this->m_depletant_idx(itype,jtype)];
-                    if (ntrial == 0)
+                    float gamma = this->m_gamma[this->m_depletant_idx(itype,jtype)];
+                    if (gamma == 0.0)
                         continue;
 
                     cudaMemAdvise(m_n_depletants_ntrial.get() + ntrial_offset + range.first,
-                        sizeof(unsigned int)*nelem*2*ntrial, cudaMemAdviseSetPreferredLocation, gpu_map[idev]);
+                        sizeof(unsigned int)*nelem*2, cudaMemAdviseSetPreferredLocation, gpu_map[idev]);
                     cudaMemPrefetchAsync(m_n_depletants_ntrial.get() + ntrial_offset + range.first,
-                        sizeof(unsigned int)*nelem*2*ntrial, gpu_map[idev]);
-                    ntrial_offset += ntrial*2*this->m_pdata->getMaxN();
+                        sizeof(unsigned int)*nelem*2, gpu_map[idev]);
+                    ntrial_offset += 2*this->m_pdata->getMaxN();
                     CHECK_CUDA_ERROR();
                     }
                 }
@@ -1045,7 +1045,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
             update_gpu_advice = true;
             }
 
-        // resize data structures for depletants with ntrial > 0
+        // resize data structures for depletants with gamma > 0
         bool have_auxiliary_variables = false;
         unsigned int ntrial_tot = 0;
 
@@ -1087,11 +1087,11 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                 {
                 if (this->m_fugacity[this->m_depletant_idx(itype,jtype)] == 0)
                     continue;
-                unsigned int ntrial = this->m_ntrial[this->m_depletant_idx(itype,jtype)];
-                if (ntrial == 0)
+                float gamma = this->m_gamma[this->m_depletant_idx(itype,jtype)];
+                if (gamma == 0.0)
                     continue;
                 have_auxiliary_variables = true;
-                ntrial_tot += ntrial;
+                ntrial_tot++;
                 }
             }
         unsigned int req_n_depletants_size = ntrial_tot*2*this->m_pdata->getMaxN();
@@ -1420,7 +1420,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                      * Insert depletants
                      */
                     ArrayHandle<Scalar> h_fugacity(this->m_fugacity, access_location::host, access_mode::read);
-                    ArrayHandle<unsigned int> h_ntrial(this->m_ntrial, access_location::host, access_mode::read);
+                    ArrayHandle<float> h_gamma(this->m_gamma, access_location::host, access_mode::read);
 
                     unsigned int ntrial_offset = 0;
 
@@ -1432,12 +1432,12 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                             if (h_fugacity.data[this->m_depletant_idx(itype,jtype)] == 0)
                                 continue;
 
-                            unsigned int ntrial = h_ntrial.data[this->m_depletant_idx(itype,jtype)];
-                            if (!ntrial)
+                            float gamma = h_gamma.data[this->m_depletant_idx(itype,jtype)];
+                            if (gamma == 0.0)
                                 {
                                 if (this->m_patch)
                                     {
-                                    throw std::runtime_error("Depletants with patchy interactions only supported with ntrial > 0.\n");
+                                    throw std::runtime_error("Depletants with patchy interactions are only supported with gamma > 0.\n");
                                     }
 
                                 // draw random number of depletant insertions per particle from Poisson distribution
@@ -1505,7 +1505,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 gpu::generate_num_depletants_ntrial(
                                     d_vel.data,
                                     d_trial_vel.data,
-                                    ntrial,
+                                    gamma,
                                     itype,
                                     jtype,
                                     this->m_depletant_idx,
@@ -1525,7 +1525,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 // max reduce over result
                                 unsigned int max_n_depletants[this->m_exec_conf->getNumActiveGPUs()];
                                 gpu::get_max_num_depletants_ntrial(
-                                    ntrial,
+                                    gamma,
                                     d_n_depletants_ntrial.data + ntrial_offset,
                                     &max_n_depletants[0],
                                     particle_comm_rank == particle_comm_size - 1,
@@ -1571,7 +1571,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                 unsigned int work_offset[this->m_exec_conf->getNumActiveGPUs()];
                                 for (unsigned int idev = 0; idev < this->m_exec_conf->getNumActiveGPUs(); ++idev)
                                     {
-                                    nwork_rank[idev] = ntrial*max_n_depletants[idev];
+                                    nwork_rank[idev] = max_n_depletants[idev];
                                     work_offset[idev] = 0;
                                     }
 
@@ -1595,7 +1595,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     d_tag.data,
                                     d_vel.data,
                                     d_trial_vel.data,
-                                    ntrial,
+                                    gamma,
                                     &nwork_rank[0],
                                     &work_offset[0],
                                     d_n_depletants_ntrial.data + ntrial_offset,
@@ -1729,7 +1729,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     }
                                 this->m_exec_conf->endMultiGPU();
 
-                                ntrial_offset += ntrial*2*this->m_pdata->getMaxN();
+                                ntrial_offset += 2*this->m_pdata->getMaxN();
                                 }
                             }
                         }

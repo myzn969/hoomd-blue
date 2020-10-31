@@ -149,9 +149,9 @@ class nvt_lj_sphere_energy(unittest.TestCase):
                             use_clusters=False, union=True);
 
 
-    def test_low_density_clusters(self):
-        self.run_statepoint(Tstar=8.50E-01, rho_star=9.00E-03, mean_Uref=-9.3973E-02, sigma_Uref=1.29E-04,
-                            use_clusters=True, union=False);
+#    def test_low_density_clusters(self):
+#        self.run_statepoint(Tstar=8.50E-01, rho_star=9.00E-03, mean_Uref=-9.3973E-02, sigma_Uref=1.29E-04,
+#                            use_clusters=True, union=False);
 
     def test_moderate_density_normal(self):
         self.run_statepoint(Tstar=9.00E-01, rho_star=7.76E-01, mean_Uref=-5.4689E+00, sigma_Uref=4.20E-04,
