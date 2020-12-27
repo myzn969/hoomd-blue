@@ -33,6 +33,8 @@
 #include <tbb/parallel_reduce.h>
 #endif
 
+#include <atomic>
+
 #ifdef ENABLE_MPI
 #include "hoomd/Communicator.h"
 #include "hoomd/HOOMDMPI.h"
@@ -485,7 +487,8 @@ class IntegratorHPMCMono : public IntegratorHPMC
             const Scalar *h_diameter, const Scalar *h_charge, unsigned int *h_overlaps, hpmc_counters_t& counters,
             hpmc_implicit_counters_t *implicit_counters,
             unsigned int timestep, hoomd::RandomGenerator& rng_depletants,
-            unsigned int seed_i_old, unsigned int seed_i_new);
+            unsigned int seed_i_old, unsigned int seed_i_new,
+            unsigned int sign_i_new);
 
         //! Set the nominal width appropriate for looped moves
         virtual void updateCellWidth();
@@ -621,6 +624,7 @@ std::vector< std::string > IntegratorHPMCMono<Shape>::getProvidedLogQuantities()
       result.push_back(tmp_str0.str());
       }
 
+    result.push_back("weight");
     result.push_back("hpmc_gamma");
 
     for (unsigned int typ=0; typ<this->m_pdata->getNTypes();typ++)
@@ -684,6 +688,24 @@ Scalar IntegratorHPMCMono<Shape>::getLogValue(const std::string& quantity, unsig
     if (quantity == "hpmc_gamma")
         {
         return m_gamma[m_depletant_idx(0,0)];
+        }
+
+    if (quantity == "weight")
+        {
+        ArrayHandle<Scalar4> h_vel(this->m_pdata->getVelocities(), access_location::host, access_mode::read);
+        int sign = 1;
+        for (unsigned int i = 0; i < this->m_pdata->getN(); ++i)
+            {
+            sign *= __scalar_as_int(h_vel.data[i].y) ? -1 : 1;
+            }
+
+        #ifdef ENABLE_MPI
+        if (this->m_pdata->getDomainDecomposition())
+            {
+            MPI_Allreduce(MPI_IN_PLACE, &sign, 1, MPI_INT, MPI_PROD, m_exec_conf->getMPICommunicator());
+            }
+        #endif
+        return (Scalar) sign;
         }
 
     for (unsigned int typ=0; typ<m_pdata->getNTypes();typ++)
@@ -1211,13 +1233,15 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
             // The trial move is valid, so check if it is invalidated by depletants
             unsigned int seed_i_new = hoomd::detail::generate_u32(rng_i);
             unsigned int seed_i_old = __scalar_as_int(h_vel.data[i].x);
+            unsigned int sign_i_new = hoomd::UniformIntDistribution(1)(rng_i);
 
             if (has_depletants && accept)
                 {
                 accept = checkDepletantOverlap(i, pos_i, shape_i, typ_i, h_postype.data,
                     h_orientation.data, h_tag.data, h_vel.data, h_diameter.data,
                     h_charge.data, h_overlaps.data, counters, h_implicit_counters.data,
-                    timestep^i_nselect, rng_depletants, seed_i_old, seed_i_new);
+                    timestep^i_nselect, rng_depletants, seed_i_old, seed_i_new,
+                    sign_i_new);
                 }
 
             // If no overlaps and Metropolis criterion is met, accept
@@ -1248,7 +1272,10 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
 
                 // store new seed
                 if (has_depletants)
+                    {
                     h_vel.data[i].x = __int_as_scalar(seed_i_new);
+                    h_vel.data[i].y = __int_as_scalar(sign_i_new);
+                    }
                 }
             else
                 {
@@ -2424,7 +2451,8 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     const Scalar4 *h_vel, const Scalar *h_diameter, const Scalar *h_charge,
     unsigned int *h_overlaps, hpmc_counters_t& counters, hpmc_implicit_counters_t *implicit_counters,
     unsigned int timestep, hoomd::RandomGenerator& rng_depletants,
-    unsigned int seed_i_old, unsigned int seed_i_new)
+    unsigned int seed_i_old, unsigned int seed_i_new,
+    unsigned int sign_i_new)
     {
     const unsigned int n_images = this->m_image_list.size();
     unsigned int ndim = this->m_sysdef->getNDimensions();
@@ -2441,6 +2469,8 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
     Scalar ln_numerator(0.0);
     Scalar ln_denominator(0.0);
+    std::atomic<unsigned int> sign_i(0);
+    bool reject = false;
 
     try {
 
@@ -2473,6 +2503,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
         std::vector<unsigned int> type_j_new;
         std::vector<unsigned int> tag_j_new;
         std::vector<unsigned int> seed_j_new;
+        std::vector<unsigned int> sign_j_new;
 
         bool repulsive = fugacity < 0.0;
 
@@ -2705,6 +2736,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                                 type_j_new.push_back(typ_j);
                                 tag_j_new.push_back(h_tag[j]);
                                 seed_j_new.push_back(__scalar_as_int(h_vel[j].x));
+                                sign_j_new.push_back(__scalar_as_int(h_vel[j].y));
                                 }
                             }
                         }
@@ -2724,6 +2756,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 &pos_j_new, &orientation_j_new, &type_j_new,
                 &pos_j_old, &orientation_j_old, &type_j_old,
                 &thread_ln_denominator, &thread_ln_numerator,
+                &sign_i, &reject,
                 &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& v) {
         for (unsigned int new_config = v.begin(); new_config != v.end(); ++new_config)
         #else
@@ -2762,6 +2795,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     &pos_j_new, &orientation_j_new, &type_j_new,
                     &pos_j_old, &orientation_j_old, &type_j_old,
                     &thread_ln_denominator, &thread_ln_numerator,
+                    &sign_i,
                     &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& t) {
             for (unsigned int l = t.begin(); l != t.end(); ++l)
             #else
@@ -2950,20 +2984,14 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 f_i = overlap_i + (1-overlap_i)*f_i;
                 f_j = has_overlap + (1-has_overlap)*f_j;
 
-                Scalar betaF;
+                Scalar betaF = log(fabs(1.0+f_i*f_j/(Scalar)gamma));
 
-                bool numerator = (repulsive && !new_config) || (!repulsive && new_config);
-                if (f_i*f_j < 0)
+                if (f_i*f_j < -gamma && new_config)
                     {
-                    betaF = log(1.0-f_i*f_j/(Scalar)gamma);
-                    numerator = !numerator;
-                    }
-                else
-                    {
-                    betaF = log(1.0+f_i*f_j/(Scalar)gamma);
+                    sign_i ^= 1;
                     }
 
-                if (!numerator)
+                if (!new_config)
                     {
                     #ifdef ENABLE_TBB
                     thread_ln_denominator.local() += betaF;
@@ -2984,6 +3012,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 });
             #endif
 
+            // check auxiliary variable
+            if (new_config && sign_i.load() != sign_i_new)
+                {
+                reject = true;
+                throw false;
+                }
+
             // insert into each neighbor volume
             #ifdef ENABLE_TBB
             tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n_intersect),
@@ -2991,6 +3026,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     &pos_j_new, &orientation_j_new, &type_j_new,
                     &pos_j_old, &orientation_j_old, &type_j_old,
                     &thread_ln_denominator, &thread_ln_numerator,
+                    &reject,
                     &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& y) {
             for (unsigned int k = y.begin(); k != y.end(); ++k)
             #else
@@ -3038,6 +3074,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                 unsigned int n = poisson(rng_num);
 
+                std::atomic<unsigned int> sign_k_new(0);
+                std::atomic<unsigned int> sign_k_old(0);
+
                 // for every depletant
                 #ifdef ENABLE_TBB
                 tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
@@ -3045,6 +3084,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         &pos_j_new, &orientation_j_new, &type_j_new,
                         &pos_j_old, &orientation_j_old, &type_j_old,
                         &thread_ln_denominator, &thread_ln_numerator,
+                        &sign_k_new, &sign_k_old,
                         &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& t) {
                 for (unsigned int l = t.begin(); l != t.end(); ++l)
                 #else
@@ -3307,7 +3347,6 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             quat<Scalar> orientation_m = new_config ? orientation_j_new[m] : orientation_j_old[m];
                             vec3<Scalar> r_m_test = vec3<Scalar>(pos_test) - (new_config ? pos_j_new[m] : pos_j_old[m]);
 
-
                             OverlapReal r_cut_patch_m = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(type_m);
                             r_cut_patch_m += 0.5*this->m_patch->getAdditiveCutoff(type_a);
 
@@ -3338,84 +3377,79 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                     float U_neigh = U_m + ((tag_i > tag_k) ? U_i : 0);
                     Scalar f_neigh = 1.0 - std::exp(-U_neigh);
-                    bool overlap_neigh = has_overlap || overlap_i;
+                    bool overlap_neigh = has_overlap || (tag_i > tag_k ? overlap_i : false);
                     f_neigh = overlap_neigh + (1-overlap_neigh)*f_neigh;
 
-                    if ((tag_i > tag_k) && (interact_i || overlap_i))
+                    Scalar betaF = log(fabs(1.0+f_k*f_neigh/(Scalar)gamma));
+
+                    if (f_k*f_neigh < -gamma)
                         {
-                        Scalar betaF;
-                        bool numerator = (repulsive && !new_config) || (!repulsive && new_config);
-
-                        if (f_k*f_neigh < 0)
-                            {
-                            betaF = log(1.0-f_k*f_neigh/(Scalar)gamma);
-                            numerator = !numerator;
-                            }
+                        if (new_config)
+                            sign_k_new ^= 1;
                         else
+                            sign_k_old ^= 1;
+                        }
+
+                    if (!new_config)
+                        {
+                        #ifdef ENABLE_TBB
+                        thread_ln_denominator.local() += betaF;
+                        #else
+                        ln_denominator += betaF;
+                        #endif
+                        }
+                    else
+                        {
+                        #ifdef ENABLE_TBB
+                        thread_ln_numerator.local() += betaF;
+                        #else
+                        ln_numerator += betaF;
+                        #endif
+                        }
+
+                        {
+                        float U_neigh_other = U_m;
+                        Scalar f_neigh_other = 1.0 - std::exp(-U_neigh_other);
+                        bool overlap_neigh_other = has_overlap;
+                        f_neigh_other = overlap_neigh_other + (1-overlap_neigh_other)*f_neigh_other;
+
+                        Scalar betaF_other = log(fabs(1.0+f_k*f_neigh_other/(Scalar)gamma));
+
+                        if (f_k*f_neigh_other < -gamma)
                             {
-                            betaF = log(1.0+f_k*f_neigh/(Scalar)gamma);
+                            if (new_config)
+                                sign_k_new ^= 1;
+                            else
+                                sign_k_old ^= 1;
                             }
 
-                        if (!numerator)
+                        if (!new_config)
                             {
                             #ifdef ENABLE_TBB
-                            thread_ln_denominator.local() += betaF;
+                            thread_ln_numerator.local() += betaF_other;
                             #else
-                            ln_denominator += betaF;
+                            ln_numerator += betaF_other;
                             #endif
                             }
                         else
                             {
                             #ifdef ENABLE_TBB
-                            thread_ln_numerator.local() += betaF;
+                            thread_ln_denominator.local() += betaF_other;
                             #else
-                            ln_numerator += betaF;
+                            ln_denominator += betaF_other;
                             #endif
-                            }
-
-                        if (!interact_i_other && !overlap_i_other)
-                            {
-                            float U_neigh_other = U_m + ((tag_i > tag_k) ? U_i_other : 0);
-                            Scalar f_neigh_other = 1.0 - std::exp(-U_neigh_other);
-                            bool overlap_neigh_other = has_overlap || overlap_i_other;
-                            f_neigh_other = overlap_neigh_other + (1-overlap_neigh_other)*f_neigh_other;
-
-                            Scalar betaF_other;
-
-                            bool numerator = (repulsive && new_config) || (!repulsive && !new_config);
-
-                            if (f_k*f_neigh_other < 0)
-                                {
-                                numerator = !numerator;
-                                betaF_other = log(1.0-f_k*f_neigh_other/(Scalar)gamma);
-                                }
-                            else
-                                {
-                                betaF_other = log(1.0+f_k*f_neigh_other/(Scalar)gamma);
-                                }
-
-                            if (numerator)
-                                {
-                                #ifdef ENABLE_TBB
-                                thread_ln_numerator.local() += betaF_other;
-                                #else
-                                ln_numerator += betaF_other;
-                                #endif
-                                }
-                            else
-                                {
-                                #ifdef ENABLE_TBB
-                                thread_ln_denominator.local() += betaF_other;
-                                #else
-                                ln_denominator += betaF_other;
-                                #endif
-                                }
                             }
                         }
                     } // end loop over depletants
                     #ifdef ENABLE_TBB
                     });
                     #endif
+
+                if ((new_config && sign_k_new.load()) || (!new_config && sign_k_old.load()))
+                    {
+                    reject = true;
+                    throw false;
+                    }
                 } // end loop over intersections
                 #ifdef ENABLE_TBB
                 });
@@ -3443,7 +3477,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     } catch (bool b) { }
 
     Scalar u = hoomd::UniformDistribution<Scalar>()(rng_depletants);
-    bool accept = u <= exp(ln_numerator-ln_denominator);
+    bool accept = !reject && u <= exp(ln_numerator-ln_denominator);
 
     #ifdef ENABLE_TBB
     // reduce counters
