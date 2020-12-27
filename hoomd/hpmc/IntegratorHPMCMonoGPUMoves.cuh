@@ -52,6 +52,7 @@ __global__ void hpmc_gen_moves(const Scalar4 *d_postype,
                            Scalar4 *d_trial_vel,
                            unsigned int *d_trial_move_type,
                            unsigned int *d_reject_out_of_cell,
+                           const bool patch,
                            const typename Shape::param_type *d_params)
     {
     // load the per type pair parameters into shared memory
@@ -155,12 +156,19 @@ __global__ void hpmc_gen_moves(const Scalar4 *d_postype,
 
     if (have_auxiliary_variable)
         {
-        // generate a new random auxiliary variable
+        // generate new random auxiliary variables
         unsigned int seed_i_new = hoomd::detail::generate_u32(rng);
+        unsigned int sign_i_new = hoomd::UniformIntDistribution(1)(rng);
 
-        // store it in the velocity .x field
+        // store it in the velocity variable
         Scalar4 vel = d_vel[idx];
         vel.x = __int_as_scalar(seed_i_new);
+
+        if (patch)
+            {
+            vel.y = __int_as_scalar(sign_i_new);
+            }
+
         d_trial_vel[idx] = vel;
         }
 
@@ -324,6 +332,7 @@ void hpmc_gen_moves(const hpmc_args_t& args, const typename Shape::param_type *p
                                                                      args.d_trial_vel,
                                                                      args.d_trial_move_type,
                                                                      args.d_reject_out_of_cell,
+                                                                     args.patch,
                                                                      params
                                                                 );
         }
@@ -373,6 +382,7 @@ void hpmc_gen_moves(const hpmc_args_t& args, const typename Shape::param_type *p
                                                                      args.d_trial_vel,
                                                                      args.d_trial_move_type,
                                                                      args.d_reject_out_of_cell,
+                                                                     args.patch,
                                                                      params
                                                                 );
         }

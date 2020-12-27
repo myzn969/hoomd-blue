@@ -63,7 +63,8 @@ struct hpmc_args_t
                 const hipDeviceProp_t &_devprop,
                 const GPUPartition& _gpu_partition,
                 const hipStream_t *_streams,
-                unsigned int *_d_type_params)
+                unsigned int *_d_type_params,
+                bool _patch)
                 : d_postype(_d_postype),
                   d_orientation(_d_orientation),
                   d_vel(_d_vel),
@@ -107,7 +108,8 @@ struct hpmc_args_t
                   devprop(_devprop),
                   gpu_partition(_gpu_partition),
                   streams(_streams),
-                  d_type_params(_d_type_params)
+                  d_type_params(_d_type_params),
+                  patch(_patch)
         {
         };
 
@@ -155,6 +157,7 @@ struct hpmc_args_t
     const GPUPartition& gpu_partition; //!< Multi-GPU partition
     const hipStream_t *streams;        //!< kernel streams
     unsigned int *d_type_params;       //!< Per-type tuning parameters
+    const bool patch;                  //!< True if patchy interactions are active
     };
 
 //! Wraps arguments for hpmc_update_pdata
@@ -347,6 +350,7 @@ void hpmc_shift(Scalar4 *d_postype,
 
 void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_trial_move_type,
+                 const Scalar4 *d_trial_vel,
                  const unsigned int *d_reject_out_of_cell,
                  unsigned int *d_reject,
                  unsigned int *d_reject_out,
@@ -381,7 +385,9 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int maxn_deltaF_nor,
                  const bool have_auxiliary_variables,
                  const unsigned int block_size,
-                 const unsigned int tpp);
+                 const unsigned int tpp,
+                 const unsigned int max_neighbors,
+                 unsigned int *d_req_neighbors);
 
 void hpmc_accept(const unsigned int *d_trial_move_type,
      unsigned int *d_reject_in,

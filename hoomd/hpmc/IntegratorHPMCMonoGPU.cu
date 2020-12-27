@@ -115,6 +115,7 @@ __global__ void hpmc_shift(Scalar4 *d_postype,
 //!< Kernel to accept/reject
 __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_trial_move_type,
+                 const Scalar4 *d_trial_vel,
                  const unsigned int *d_reject_out_of_cell,
                  unsigned int *d_reject,
                  unsigned int *d_reject_out,
@@ -148,7 +149,9 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const Scalar *d_deltaF_nor,
                  Scalar *d_F,
                  const unsigned int maxn_deltaF_nor,
-                 const bool have_auxiliary_variables
+                 const bool have_auxiliary_variables,
+                 const unsigned int max_neighbors,
+                 unsigned int *d_req_neighbors
                  )
     {
     unsigned offset = threadIdx.x;
@@ -171,6 +174,13 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
     float *s_deltaF = (float *) (s_energy_new + n_groups);
     unsigned int *s_reject = (unsigned int *) (s_deltaF + n_groups);
 
+    unsigned int *s_lookup_old = (unsigned int *) (s_reject + n_groups);
+    unsigned int *s_sign_old = (unsigned int *) (s_lookup_old + n_groups*max_neighbors);
+    unsigned int *s_lookup_new = (unsigned int *) (s_sign_old + n_groups*max_neighbors);
+    unsigned int *s_sign_new = (unsigned int *) (s_lookup_new + n_groups*max_neighbors);
+    unsigned int *s_len_old = (unsigned int *) (s_sign_new + n_groups*max_neighbors);
+    unsigned int *s_len_new = (unsigned int *) (s_len_old + n_groups);
+
     bool move_active = false;
     if (active && master)
         {
@@ -178,6 +188,9 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
         s_energy_old[group] = 0.0f;
         s_energy_new[group] = 0.0f;
         s_deltaF[group] = 0.0f;
+
+        s_len_old[group] = 0;
+        s_len_new[group] = 0;
         }
 
     if (active)
@@ -294,6 +307,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
             // depletants with auxiliary ntrial != 0
             unsigned int nneigh = d_deltaF_or_nneigh[i];
             unsigned int nterms = 0;
+            unsigned int sign_i = 0;
             for (unsigned int cur_neigh = 0; cur_neigh < nneigh; cur_neigh += nterms)
                 {
                 nterms = d_deltaF_or_len[maxn_deltaF_or*i + cur_neigh];
@@ -332,8 +346,16 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                         atomicAdd(&s_deltaF[group], logf(fabsf(1+f_i*f_j)));
                     else
                         atomicAdd(&s_deltaF[group], -logf(fabsf(1+f_i*f_j)));
+
+                    if (new_config && f_i*f_j < -1)
+                        sign_i ^= 1;
                     }
                 } // end loop over terms
+
+            if (sign_i != __scalar_as_int(d_trial_vel[i].y))
+                {
+                atomicMax(&s_reject[group], 1);
+                }
 
             nneigh = d_deltaF_nor_nneigh[i];
             nterms = 0;
@@ -392,12 +414,16 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
 
                 float f_j = has_overlap + (1-has_overlap)*(1.0f-fast::exp(-U_j));
                 float f_k = d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh];
+                unsigned int sign_k = 0;
                 if (f_j != 0.0)
                     {
                     if (!i_old)
                         atomicAdd(&s_deltaF[group], logf(fabs(1+f_k*f_j)));
                     else
                         atomicAdd(&s_deltaF[group], -logf(fabs(1+f_k*f_j)));
+
+                    if (f_k*f_j < -1.0f)
+                        sign_k ^= 1;
                     }
 
                 // add back neighbor term (excluding i) on the other side of the fraction
@@ -408,8 +434,80 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                         atomicAdd(&s_deltaF[group], -logf(fabs(1+f_k*f_j_other)));
                     else
                         atomicAdd(&s_deltaF[group], logf(fabs(1+f_k*f_j_other)));
+
+                    if (f_k*f_j_other < -1.0f)
+                        sign_k ^= 1;
+                    }
+
+                if (sign_k)
+                    {
+                    unsigned int *s_lookup;
+                    unsigned int *s_sign;
+                    unsigned int *s_len;
+                    if (i_old)
+                        {
+                        s_lookup = &s_lookup_old[group*max_neighbors];
+                        s_sign = &s_sign_old[group*max_neighbors];
+                        s_len = &s_len_old[group];
+                        }
+                    else
+                        {
+                        s_lookup = &s_lookup_new[group*max_neighbors];
+                        s_sign = &s_sign_new[group*max_neighbors];
+                        s_len = &s_len_new[group];
+                        }
+
+                    // store sign change in table for neighbor k
+                    unsigned int l = 0;
+                    for (; l < *s_len; ++l)
+                        {
+                        if (s_lookup[l] == k)
+                            break;
+                        }
+
+                    if (l == *s_len)
+                        {
+                        // add at the end
+                        unsigned int insert_pos = *s_len;
+                        if (insert_pos >= max_neighbors)
+                            {
+                            #if (__CUDA_ARCH__ >= 600)
+                            atomicMax_system(&d_req_neighbors[i], insert_pos);
+                            #else
+                            atomicMax(&d_req_neighbors[i], insert_pos);
+                            #endif
+                            }
+
+                        if (insert_pos < max_neighbors)
+                            {
+                            s_lookup[insert_pos] = k;
+                            s_sign[insert_pos] = 1;
+                            }
+
+                        *s_len++;
+                        }
+                    else
+                        {
+                        // update sign for neighbor k
+                        s_sign[l] ^= 1;
+                        }
                     }
                 } // end loop over terms
+
+            // have we changed any neighbor's sign?
+            unsigned int len = s_len_old[group];
+            for (unsigned int l = 0; l < len; ++l)
+                {
+                if (s_sign_old[l])
+                    atomicMax(&s_reject[group], 1);
+                }
+            // have we changed any neighbor's sign?
+            len = s_len_new[group];
+            for (unsigned int l = 0; l < len; ++l)
+                {
+                if (s_sign_new[l])
+                    atomicMax(&s_reject[group], 1);
+                }
             } // end depletants
 
         } // end if (active && move_active)
@@ -578,6 +676,7 @@ void hpmc_shift(Scalar4 *d_postype,
 
 void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_trial_move_type,
+                 const Scalar4 *d_trial_vel,
                  const unsigned int *d_reject_out_of_cell,
                  unsigned int *d_reject,
                  unsigned int *d_reject_out,
@@ -612,7 +711,9 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int maxn_deltaF_nor,
                  const bool have_auxiliary_variables,
                  const unsigned int block_size,
-                 const unsigned int tpp)
+                 const unsigned int tpp,
+                 const unsigned int max_neighbors,
+                 unsigned int *d_req_neighbors)
     {
     // determine the maximum block size and clamp the input block size down
     static int max_block_size = -1;
@@ -642,10 +743,13 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
         const unsigned int num_blocks = nwork/n_groups + 1;
         dim3 grid(num_blocks, 1, 1);
 
-        unsigned int shared_bytes = n_groups * (3*sizeof(float) + sizeof(unsigned int));
+        unsigned int shared_bytes = n_groups * (3*sizeof(float) + 3*sizeof(unsigned int))
+                                    + n_groups*max_neighbors*4*sizeof(unsigned int);
+
         hipLaunchKernelGGL(kernel::hpmc_sum_energies, grid, threads, shared_bytes, 0,
             d_update_order_by_ptl,
             d_trial_move_type,
+            d_trial_vel,
             d_reject_out_of_cell,
             d_reject,
             d_reject_out,
@@ -679,7 +783,9 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
             d_deltaF_nor,
             d_F,
             maxn_deltaF_nor,
-            have_auxiliary_variables
+            have_auxiliary_variables,
+            max_neighbors,
+            d_req_neighbors
             );
         }
 

@@ -1233,10 +1233,15 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
             // The trial move is valid, so check if it is invalidated by depletants
             unsigned int seed_i_new = hoomd::detail::generate_u32(rng_i);
             unsigned int seed_i_old = __scalar_as_int(h_vel.data[i].x);
-            unsigned int sign_i_new = hoomd::UniformIntDistribution(1)(rng_i);
+            unsigned int sign_i_new = 0;
 
             if (has_depletants && accept)
                 {
+                if (m_patch && !m_patch_log)
+                    {
+                    sign_i_new = hoomd::UniformIntDistribution(1)(rng_i);
+                    }
+
                 accept = checkDepletantOverlap(i, pos_i, shape_i, typ_i, h_postype.data,
                     h_orientation.data, h_tag.data, h_vel.data, h_diameter.data,
                     h_charge.data, h_overlaps.data, counters, h_implicit_counters.data,
@@ -1270,7 +1275,7 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
                     h_orientation.data[i] = quat_to_scalar4(shape_i.orientation);
                     }
 
-                // store new seed
+                // store new values of auxiliary variables
                 if (has_depletants)
                     {
                     h_vel.data[i].x = __int_as_scalar(seed_i_new);

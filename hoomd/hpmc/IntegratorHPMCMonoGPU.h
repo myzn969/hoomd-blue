@@ -326,6 +326,8 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<unsigned int> m_overflow_nor;             //!< Overflow condition for logical NOR
 
         GlobalArray<Scalar> m_F;                              //!< accumulated free energy
+        GlobalArray<unsigned int> m_req_neighbors;            //!< Requested number of neighbors
+        unsigned int m_max_neighbors;                         //!< Maximum number of neighbors
 
         GlobalArray<unsigned int> m_nlist;                       //!< List of overlapping particles
         GlobalArray<unsigned int> m_nneigh;                     //!< Number of neighbors
@@ -606,6 +608,18 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
 
     GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_F);
     TAG_ALLOCATION(m_F);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_req_neighbors);
+    TAG_ALLOCATION(m_req_neighbors);
+
+    m_max_neighbors = 0;
+
+        {
+        // reset req_neighbors flag for depletants
+        ArrayHandle<unsigned int> h_req_neighbors(m_req_neighbors, access_location::host, access_mode::overwrite);
+        *h_req_neighbors.data = 0;
+        }
+
 
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_nlist);
     TAG_ALLOCATION(m_nlist);
@@ -1245,7 +1259,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     this->m_exec_conf->dev_prop,
                     this->m_pdata->getGPUPartition(),
                     0,// streams
-                    0 // tuning parameters
+                    0, // tuning parameters
+                    (this->m_patch != 0) && !this->m_patch_log
                     );
 
                 // propose trial moves, \sa gpu::kernel::hpmc_moves
@@ -1401,7 +1416,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         this->m_exec_conf->dev_prop,
                         gpu_partition_rank,
                         &m_narrow_phase_streams.front(),
-                        0 //tuning parameters
+                        0, //tuning parameters
+                        (this->m_patch != 0) && !this->m_patch_log
                         );
 
                     /*
@@ -1859,6 +1875,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     {
                     ArrayHandle<unsigned int> d_update_order_by_ptl(m_update_order.get(), access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_trial_move_type(m_trial_move_type, access_location::device, access_mode::read);
+                    ArrayHandle<Scalar4> d_trial_vel(m_trial_vel, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_reject_out_of_cell(m_reject_out_of_cell, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_reject(m_reject, access_location::device, access_mode::readwrite);
                     ArrayHandle<unsigned int> d_reject_out(m_reject_out, access_location::device, access_mode::overwrite);
@@ -1891,6 +1908,8 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
 
                     ArrayHandle<Scalar> d_F(m_F, access_location::device, access_mode::overwrite);
 
+                    ArrayHandle<unsigned int> d_req_neighbors(m_req_neighbors, access_location::device, access_mode::readwrite);
+
                     this->m_exec_conf->beginMultiGPU();
                     m_tuner_energies->begin();
                     unsigned int param = m_tuner_energies->getParam();
@@ -1898,6 +1917,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     unsigned int tpp = param%10000;
                     gpu::hpmc_sum_energies(d_update_order_by_ptl.data,
                         d_trial_move_type.data,
+                        d_trial_vel.data,
                         d_reject_out_of_cell.data,
                         d_reject.data,
                         d_reject_out.data,
@@ -1932,7 +1952,9 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         m_deltaF_nor_maxlen,
                         have_auxiliary_variables,
                         block_size,
-                        tpp);
+                        tpp,
+                        m_max_neighbors,
+                        d_req_neighbors.data);
 
                     if (this->m_exec_conf->isCUDAErrorCheckingEnabled())
                         CHECK_CUDA_ERROR();
@@ -2042,6 +2064,17 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         CHECK_CUDA_ERROR();
                     m_tuner_accept->end();
                     this->m_exec_conf->endMultiGPU();
+                    }
+
+                    {
+                    ArrayHandle<unsigned int> h_req_neighbors(m_req_neighbors, access_location::host, access_mode::read);
+
+                    // adjust shared memory size for next kernel launch
+                    if (m_max_neighbors < *h_req_neighbors.data)
+                        {
+                        m_max_neighbors = *h_req_neighbors.data;
+                        continue;
+                        }
                     }
 
                 // update reject flags
