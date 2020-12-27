@@ -63,7 +63,7 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                                      unsigned int depletant_type,
                                      const Index2D depletant_idx,
                                      hpmc_implicit_counters_t *d_implicit_counters,
-                                     const float ntrial,
+                                     const float gamma,
                                      const unsigned int *d_tag,
                                      const Scalar4 *d_vel,
                                      const Scalar4 *d_trial_vel,
@@ -694,14 +694,10 @@ __global__ void hpmc_insert_depletants_phase2(const Scalar4 *d_trial_postype,
                     d_deltaF_nor_len[overlap_k*max_len_deltaF + n] = nterms;
                     d_deltaF_nor_k[overlap_k*max_len_deltaF + n] = (((i << 1) | !new_config) << 1) | overlap_old_k;
 
-                    float f_i;
-                    if ((!overlap_old_k && !repulsive) || (overlap_old_k && repulsive))
-                        f_i = s_queue_f[group];
-                    else
-                        f_i = -s_queue_f[group];
+                    float f_i = s_queue_f[group];
 
                     // add Mayer f weight of particle k
-                    d_deltaF_nor[overlap_k*max_len_deltaF+n] = f_i/(Scalar)ntrial;
+                    d_deltaF_nor[overlap_k*max_len_deltaF+n] = f_i/gamma;
                     }
                 if (n + nterms > max_len_deltaF)
                     {

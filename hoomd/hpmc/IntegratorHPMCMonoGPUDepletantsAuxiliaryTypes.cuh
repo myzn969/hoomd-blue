@@ -36,6 +36,7 @@ struct hpmc_auxiliary_args_t
                            unsigned int *_d_deltaF_or_len,
                            float *_d_deltaF_or_energy,
                            Scalar *_d_deltaF_or,
+                           unsigned int *_d_deltaF_or_config,
                            const unsigned int _deltaF_or_maxlen,
                            unsigned int *_d_overflow_or,
                            unsigned int *_d_deltaF_nor_nneigh,
@@ -70,6 +71,7 @@ struct hpmc_auxiliary_args_t
                   d_deltaF_or_len(_d_deltaF_or_len),
                   d_deltaF_or_energy(_d_deltaF_or_energy),
                   d_deltaF_or(_d_deltaF_or),
+                  d_deltaF_or_config(_d_deltaF_or_config),
                   deltaF_or_maxlen(_deltaF_or_maxlen),
                   d_overflow_or(_d_overflow_or),
                   d_deltaF_nor_nneigh(_d_deltaF_nor_nneigh),
@@ -106,6 +108,7 @@ struct hpmc_auxiliary_args_t
     unsigned int *d_deltaF_or_len;    //!< Length of every logical or term
     float *d_deltaF_or_energy;        //!< Energy contribution to Mayer f function
     Scalar *d_deltaF_or;              //!< Free energy associated with logical or term
+    unsigned int *d_deltaF_or_config; //!< Numerator/denominator flag
     const unsigned int deltaF_or_maxlen;    //!< Maximum number of neighbors for logical or
     unsigned int *d_overflow_or;            //!< Overflow flag for logical or
     unsigned int *d_deltaF_nor_nneigh;//!< Number of neighbors for logical nor

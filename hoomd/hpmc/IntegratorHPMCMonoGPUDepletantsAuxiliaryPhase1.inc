@@ -73,6 +73,7 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                                      unsigned int *d_deltaF_or_len,
                                      float *d_deltaF_or_energy,
                                      Scalar *d_deltaF_or,
+                                     unsigned int *d_deltaF_or_config,
                                      const unsigned int max_len_deltaF,
                                      unsigned int *d_overflow,
                                      bool repulsive,
@@ -690,13 +691,9 @@ __global__ void hpmc_insert_depletants_phase1(const Scalar4 *d_trial_postype,
                 {
                 d_deltaF_or_len[i*max_len_deltaF+n] = s_len_group[group];
 
-                float f_i;
-                if ((new_config && !repulsive) || (!new_config && repulsive))
-                    f_i = s_queue_f[group];
-                else
-                    f_i = -s_queue_f[group];
-
+                float f_i = s_queue_f[group];
                 d_deltaF_or[i*max_len_deltaF+n] = f_i/(Scalar)gamma;
+                d_deltaF_or_config[i*max_len_deltaF+n] = new_config;
                 }
             for (unsigned int k = 0; k < s_len_group[group]; k++)
                 {

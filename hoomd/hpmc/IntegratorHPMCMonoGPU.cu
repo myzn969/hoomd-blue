@@ -138,6 +138,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_deltaF_or_nlist,
                  const float *d_deltaF_or_energy,
                  const Scalar *d_deltaF_or,
+                 const unsigned int *d_deltaF_or_config,
                  const unsigned maxn_deltaF_or,
                  const unsigned int *d_deltaF_nor_nneigh,
                  const unsigned int *d_deltaF_nor_len,
@@ -296,6 +297,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
             for (unsigned int cur_neigh = 0; cur_neigh < nneigh; cur_neigh += nterms)
                 {
                 nterms = d_deltaF_or_len[maxn_deltaF_or*i + cur_neigh];
+                bool new_config = d_deltaF_or_config[maxn_deltaF_or*i + cur_neigh];
 
                 bool has_overlap = false;
                 float U_j = 0.0;
@@ -326,7 +328,10 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 if (f_j != 0.0)
                     {
                     float f_i = d_deltaF_or[maxn_deltaF_or*i + cur_neigh];
-                    atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_i*f_j)),f_i*f_j));
+                    if (new_config)
+                        atomicAdd(&s_deltaF[group], logf(fabsf(1+f_i*f_j)));
+                    else
+                        atomicAdd(&s_deltaF[group], -logf(fabsf(1+f_i*f_j)));
                     }
                 } // end loop over terms
 
@@ -352,7 +357,6 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 bool has_overlap_other = false;
                 float U_j = 0.0;
                 float U_j_other = 0.0;
-                unsigned int n_self = 0;
                 for (unsigned int cur_term = cur_neigh; cur_term < cur_neigh + nterms; ++cur_term)
                     {
                     unsigned int j_flag = d_deltaF_nor_nlist[maxn_deltaF_nor*i + cur_term];
@@ -360,12 +364,9 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                     unsigned int j = j_flag >> 2;
                     bool j_old = j_flag & 2;
 
-                    if (j == i)
+                    if (j == i && i_old != j_old)
                         {
-                        n_self++;
-
-                        if (i_old != j_old)
-                            continue;
+                        continue;
                         }
 
                     // has j been updated? ghost particles are not updated
@@ -393,16 +394,20 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                 float f_k = d_deltaF_nor[maxn_deltaF_nor*i + cur_neigh];
                 if (f_j != 0.0)
                     {
-                    atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_k*f_j)),f_k*f_j));
+                    if (!i_old)
+                        atomicAdd(&s_deltaF[group], logf(fabs(1+f_k*f_j)));
+                    else
+                        atomicAdd(&s_deltaF[group], -logf(fabs(1+f_k*f_j)));
                     }
 
-                if (n_self < 2)
+                // add back neighbor term (excluding i) on the other side of the fraction
+                float f_j_other = has_overlap_other + (1-has_overlap_other)*(1.0f-fast::exp(-U_j_other));
+                if (f_j_other != 0.0)
                     {
-                    // need to add back neighbor term in other the configuration on the opposite side of the fraction
-                    float f_j_other = has_overlap_other + (1-has_overlap_other)*(1.0f-fast::exp(-U_j_other));
-
-                    if (f_j_other != 0.0)
-                        atomicAdd(&s_deltaF[group], copysignf(logf(1+fabsf(f_k*f_j_other)),-f_k*f_j_other));
+                    if (!i_old)
+                        atomicAdd(&s_deltaF[group], -logf(fabs(1+f_k*f_j_other)));
+                    else
+                        atomicAdd(&s_deltaF[group], logf(fabs(1+f_k*f_j_other)));
                     }
                 } // end loop over terms
             } // end depletants
@@ -416,7 +421,7 @@ __global__ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
         d_reject_out[i] = s_reject[group];
         if (move_active)
             {
-            // write out final free energy
+            // write out final free energy change
             d_F[i] = s_energy_old[group] - s_energy_new[group] + s_deltaF[group];
             }
         }
@@ -595,7 +600,8 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
                  const unsigned int *d_deltaF_or_nlist,
                  const float *d_deltaF_or_energy,
                  const Scalar *d_deltaF_or,
-                 const unsigned maxn_deltaF_or,
+                 const unsigned int *d_deltaF_or_config,
+                 const unsigned int maxn_deltaF_or,
                  const unsigned int *d_deltaF_nor_nneigh,
                  const unsigned int *d_deltaF_nor_len,
                  const unsigned int *d_deltaF_nor_k,
@@ -663,6 +669,7 @@ void hpmc_sum_energies(const unsigned int *d_update_order_by_ptl,
             d_deltaF_or_nlist,
             d_deltaF_or_energy,
             d_deltaF_or,
+            d_deltaF_or_config,
             maxn_deltaF_or,
             d_deltaF_nor_nneigh,
             d_deltaF_nor_len,

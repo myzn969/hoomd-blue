@@ -313,6 +313,7 @@ class IntegratorHPMCMonoGPU : public IntegratorHPMCMono<Shape>
         GlobalArray<unsigned int> m_deltaF_or_len;            //!< Length of every logical or term
         GlobalArray<float> m_deltaF_or_energy;                //!< Energy contribution of neighbor particle
         GlobalArray<Scalar> m_deltaF_or;                      //!< Free energy contributions for logical or
+        GlobalArray<unsigned int> m_deltaF_or_config;         //!< Numerator/denominator flag
         unsigned int m_deltaF_or_maxlen;                      //!< Maximum number of neighbors for logical or
         GlobalArray<unsigned int> m_overflow_or;              //!< Overflow condition for logical OR
         GlobalArray<unsigned int> m_deltaF_nor_nneigh;        //!< Max number of neighbors for logical nor
@@ -561,6 +562,9 @@ IntegratorHPMCMonoGPU< Shape >::IntegratorHPMCMonoGPU(std::shared_ptr<SystemDefi
 
     GlobalArray<Scalar>(1, this->m_exec_conf).swap(m_deltaF_or);
     TAG_ALLOCATION(m_deltaF_or);
+
+    GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_deltaF_or_config);
+    TAG_ALLOCATION(m_deltaF_or_config);
 
     GlobalArray<unsigned int>(1, this->m_exec_conf).swap(m_overflow_or);
     TAG_ALLOCATION(m_overflow_or);
@@ -1306,6 +1310,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_deltaF_or_len(m_deltaF_or_len, access_location::device, access_mode::overwrite);
                     ArrayHandle<float> d_deltaF_or_energy(m_deltaF_or_energy, access_location::device, access_mode::overwrite);
                     ArrayHandle<Scalar> d_deltaF_or(m_deltaF_or, access_location::device, access_mode::overwrite);
+                    ArrayHandle<unsigned int> d_deltaF_or_config(m_deltaF_or_config, access_location::device, access_mode::overwrite);
                     ArrayHandle<unsigned int> d_overflow_or(m_overflow_or, access_location::device, access_mode::readwrite);
 
                     ArrayHandle<unsigned int> d_deltaF_nor_nneigh(m_deltaF_nor_nneigh, access_location::device, access_mode::overwrite);
@@ -1611,6 +1616,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                                     d_deltaF_or_len.data,
                                     d_deltaF_or_energy.data,
                                     d_deltaF_or.data,
+                                    d_deltaF_or_config.data,
                                     m_deltaF_or_maxlen,
                                     d_overflow_or.data,
                                     d_deltaF_nor_nneigh.data,
@@ -1874,6 +1880,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                     ArrayHandle<unsigned int> d_deltaF_or_len(m_deltaF_or_len, access_location::device, access_mode::read);
                     ArrayHandle<float> d_deltaF_or_energy(m_deltaF_or_energy, access_location::device, access_mode::read);
                     ArrayHandle<Scalar> d_deltaF_or(m_deltaF_or, access_location::device, access_mode::read);
+                    ArrayHandle<unsigned int> d_deltaF_or_config(m_deltaF_or_config, access_location::device, access_mode::read);
 
                     ArrayHandle<unsigned int> d_deltaF_nor_nneigh(m_deltaF_nor_nneigh, access_location::device, access_mode::read);
                     ArrayHandle<unsigned int> d_deltaF_nor_nlist(m_deltaF_nor_nlist, access_location::device, access_mode::read);
@@ -1913,6 +1920,7 @@ void IntegratorHPMCMonoGPU< Shape >::update(unsigned int timestep)
                         d_deltaF_or_nlist.data,
                         d_deltaF_or_energy.data,
                         d_deltaF_or.data,
+                        d_deltaF_or_config.data,
                         m_deltaF_or_maxlen,
                         d_deltaF_nor_nneigh.data,
                         d_deltaF_nor_len.data,
@@ -2229,6 +2237,10 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
         m_deltaF_or.swap(deltaF_or);
         TAG_ALLOCATION(m_deltaF_or);
 
+        GlobalArray<unsigned int> deltaF_or_config(req_size_nlist, this->m_exec_conf);
+        m_deltaF_or_config.swap(deltaF_or_config);
+        TAG_ALLOCATION(m_deltaF_or_config);
+
         GlobalArray<unsigned int> deltaF_or_nlist(req_size_nlist, this->m_exec_conf);
         m_deltaF_or_nlist.swap(deltaF_or_nlist);
         TAG_ALLOCATION(m_deltaF_or_nlist);
@@ -2261,6 +2273,14 @@ bool IntegratorHPMCMonoGPU< Shape >::checkReallocateDepletants()
                     gpu_map[idev]);
                 cudaMemPrefetchAsync(m_deltaF_or.get()+range.first*m_deltaF_or_maxlen,
                     sizeof(Scalar)*nelem*m_deltaF_or_maxlen,
+                    gpu_map[idev]);
+
+                cudaMemAdvise(m_deltaF_or_config.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
+                    cudaMemAdviseSetPreferredLocation,
+                    gpu_map[idev]);
+                cudaMemPrefetchAsync(m_deltaF_or_config.get()+range.first*m_deltaF_or_maxlen,
+                    sizeof(unsigned int)*nelem*m_deltaF_or_maxlen,
                     gpu_map[idev]);
 
                 cudaMemAdvise(m_deltaF_or_nlist.get()+range.first*m_deltaF_or_maxlen,
