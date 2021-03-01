@@ -3082,10 +3082,10 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             }
                         }
 
-                    float f_ij = overlap_ij + (1-overlap_ij)*(1-std::exp(-U_ij));
+                    float f_ij_12 = overlap_ij + (1-overlap_ij)*fast::sqrt(1-std::exp(-U_ij));
 
                     // <e^(-sum_i x_i)> = det(I - K_prime)
-                    K_prime(l,m) = -(double) f_ij*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m))/gamma;
+                    K_prime(l,m) = -(double) f_ij_12*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m))/gamma;
 
                     if (l == m)
                         {
@@ -3607,16 +3607,16 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                                 }
                             }
 
-                        float f_ij = overlap_ij + (1-overlap_ij)*(1-std::exp(-U_ij));
+                        float f_ij_12 = overlap_ij + (1-overlap_ij)*fast::sqrt(1-std::exp(-U_ij));
 
                         // <e^(-sum_i x_i)> = det(I - K_prime)
-                        K_prime(l,m) = -(double)f_ij*fast::sqrt(1-laplace_k(l))*fast::sqrt(1-laplace_k(m))/gamma;
+                        K_prime(l,m) = -(double)f_ij_12*fast::sqrt(1-laplace_k(l))*fast::sqrt(1-laplace_k(m))/gamma;
                         if (l==m)
                             {
                             K_prime(l,m) += 1;
                             }
 
-                        K_prime_other(l,m) = -(double)f_ij*fast::sqrt(1-laplace_k_other(l))*fast::sqrt(1-laplace_k_other(m))/gamma;
+                        K_prime_other(l,m) = -(double)f_ij_12*fast::sqrt(1-laplace_k_other(l))*fast::sqrt(1-laplace_k_other(m))/gamma;
                         if (l==m)
                             {
                             K_prime_other(l,m) += 1;
