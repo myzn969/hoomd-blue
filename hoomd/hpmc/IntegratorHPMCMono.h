@@ -3024,12 +3024,12 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                 // depletant j
                 #ifdef ENABLE_TBB
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
+                tbb::parallel_for(tbb::blocked_range<unsigned int>(l, (unsigned int)n),
                     [=, &K_prime,
                         &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& u) {
                 for (unsigned int m = u.begin(); m != u.end(); ++m)
                 #else
-                for (unsigned int m = 0; m < n; ++m)
+                for (unsigned int m = l; m < n; ++m)
                 #endif
                     {
                     hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
@@ -3063,7 +3063,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     #endif
 
                     float U_ij = 0.0;
-                    if (this->m_patch)
+                    if (this->m_patch && !overlap_ij)
                         {
                         OverlapReal r_cut_patch = this->m_patch->getRCut();
                         OverlapReal r_cut_patch_ij = r_cut_patch + this->m_patch->getAdditiveCutoff(type_a);
@@ -3091,6 +3091,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         {
                         K_prime(l,m) += 1;
                         }
+
+                    // make symmetric
+                    K_prime(m,l) = K_prime(l,m);
                     } // end loop over depletant j
                 #ifdef ENABLE_TBB
                     });
@@ -3548,11 +3551,11 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                     // depletant j
                     #ifdef ENABLE_TBB
-                    tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
+                    tbb::parallel_for(tbb::blocked_range<unsigned int>(l, (unsigned int)n),
                         [=, &K_prime, &K_prime_other, &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& u) {
                     for (unsigned int m = u.begin(); m != u.end(); ++m)
                     #else
-                    for (unsigned int m = 0; m < n; ++m)
+                    for (unsigned int m = l; m < n; ++m)
                     #endif
                         {
                         hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
@@ -3585,7 +3588,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         #endif
 
                         float U_ij = 0.0;
-                        if (this->m_patch)
+                        if (this->m_patch && !overlap_ij)
                             {
                             OverlapReal r_cut_patch = this->m_patch->getRCut();
                             OverlapReal r_cut_patch_ij = r_cut_patch + this->m_patch->getAdditiveCutoff(type_a);
@@ -3618,6 +3621,10 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             {
                             K_prime_other(l,m) += 1;
                             }
+
+                        // make symmetric
+                        K_prime(m,l) = K_prime(l,m);
+                        K_prime_other(m,l) = K_prime_other(l,m);
                         } // end loop over depletant j
                     #ifdef ENABLE_TBB
                         });
