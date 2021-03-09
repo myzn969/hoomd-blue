@@ -2483,7 +2483,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     for (unsigned int type_a = 0; type_a < this->m_pdata->getNTypes(); ++type_a)
         {
         // MHAAR random variable
-        bool select = false && hoomd::UniformIntDistribution(1)(rng_depletants);
+        bool select = hoomd::UniformIntDistribution(1)(rng_depletants);
 
         unsigned int type_b = type_a;
 
@@ -3201,7 +3201,28 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     #ifdef ENABLE_TBB
                         });
                     #endif
-                    }
+
+                    es.compute(K_per, Eigen::EigenvaluesOnly);
+                    alpha = es.eigenvalues();
+
+                    #ifdef ENABLE_TBB
+                    tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
+                        [=, &det_thread](const tbb::blocked_range<unsigned int>& t) {
+                    for (unsigned int l = t.begin(); l != t.end(); ++l)
+                    #else
+                    for (unsigned int l = 0; l < n; ++l)
+                    #endif
+                        {
+                        #ifdef ENABLE_TBB
+                        det_thread.local() *= alpha(l);
+                        #else
+                        det *= alpha(l);
+                        #endif
+                        } // end loop over depletant j
+                    #ifdef ENABLE_TBB
+                        });
+                    #endif
+                    } // end if (n>0)
 
                 #ifdef ENABLE_TBB
                 for (auto d: det_thread)
@@ -3229,7 +3250,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             {
             for (unsigned int i = 0; i < ntrial; ++i)
                 {
-                r += numerator_type[i]/ntrial;
+                r += numerator_type[i]/denominator_type[i]/ntrial;
                 }
             }
         else
@@ -3238,7 +3259,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
             for (unsigned int i = 0; i < ntrial; ++i)
                 {
-                r_inv += denominator_type[i]/ntrial;
+                r_inv += denominator_type[i]/numerator_type[i]/ntrial;
                 }
             r = 1/r_inv;
             }
