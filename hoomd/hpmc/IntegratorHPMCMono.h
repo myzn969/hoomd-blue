@@ -1240,7 +1240,7 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
 
             if (has_depletants && accept)
                 {
-                if (m_patch && !m_patch_log)
+//                if (m_patch && !m_patch_log)
                     {
                     sign_i_new = hoomd::UniformIntDistribution(1)(rng_i);
                     }
@@ -2475,15 +2475,16 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     tbb::enumerable_thread_specific<hpmc_counters_t> thread_counters;
     #endif
 
-    Scalar ln_numerator(0.0);
-    Scalar ln_denominator(0.0);
+    // MH ratio
+    Scalar r_tot(1.0);
     std::atomic<unsigned int> sign_i(0);
     bool reject = false;
 
-    try {
-
     for (unsigned int type_a = 0; type_a < this->m_pdata->getNTypes(); ++type_a)
         {
+        // MHAAR random variable
+        bool select = false && hoomd::UniformIntDistribution(1)(rng_depletants);
+
         unsigned int type_b = type_a;
 
         // GlobalVector is not thread-safe, access it outside the parallel loop
@@ -2493,12 +2494,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             continue;
 
         float gamma = m_gamma[m_depletant_idx(type_a,type_b)];
-
-        #ifdef ENABLE_TBB
-        // deltaF == free energy difference
-        tbb::enumerable_thread_specific<Scalar> thread_ln_numerator(Scalar(0.0));
-        tbb::enumerable_thread_specific<Scalar> thread_ln_denominator(Scalar(0.0));
-        #endif
+        unsigned int ntrial = gamma;
 
         std::vector<vec3<Scalar> > pos_j_old;
         std::vector<quat<Scalar> > orientation_j_old;
@@ -2512,8 +2508,6 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
         std::vector<unsigned int> tag_j_new;
         std::vector<unsigned int> seed_j_new;
         std::vector<unsigned int> sign_j_new;
-
-        bool repulsive = fugacity < 0.0;
 
         // find neighbors whose OBBs overlap particle i's OBB in the old configuration
         Shape tmp_a(quat<Scalar>(), this->m_params[type_a]);
@@ -2757,462 +2751,63 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 }  // end loop over AABB nodes
             } // end loop over images
 
+        std::vector<double> numerator_type(ntrial);
+        std::vector<double> denominator_type(ntrial);
+
         // insert into particle OBBs
         #ifdef ENABLE_TBB
         tbb::parallel_for(tbb::blocked_range<unsigned int>(0, 2),
             [=, &shape_old, &shape_i,
                 &pos_j_new, &orientation_j_new, &type_j_new,
                 &pos_j_old, &orientation_j_old, &type_j_old,
-                &thread_ln_denominator, &thread_ln_numerator,
                 &sign_i, &reject,
+                &numerator_type, &denominator_type,
                 &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& v) {
         for (unsigned int new_config = v.begin(); new_config != v.end(); ++new_config)
         #else
         for (unsigned int new_config = 0; new_config < 2; ++new_config)
         #endif
             {
-            detail::OBB obb_i = new_config ? obb_i_new : obb_i_old;
-
-            if (this->m_patch)
-                {
-                OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
-                delta += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-                obb_i.lengths.x = std::max(obb_i.lengths.x, (OverlapReal) r_cut_patch + delta);
-                obb_i.lengths.y = std::max(obb_i.lengths.y, (OverlapReal) r_cut_patch + delta);
-                obb_i.lengths.z = std::max(obb_i.lengths.z, (OverlapReal) r_cut_patch + delta);
-                }
-
-            Scalar V_i = obb_i.getVolume(ndim);
-
-            // chooose the number of depletants in the insertion OBB
-            Scalar lambda = gamma*std::abs(fugacity)*V_i;
-            hoomd::PoissonDistribution<Scalar> poisson(lambda);
-            unsigned int ntypes = this->m_pdata->getNTypes();
-            hoomd::RandomGenerator rng_num(hoomd::RNGIdentifier::HPMCDepletantNum,
-                type_a*ntypes+type_b, new_config ? seed_i_new : seed_i_old);
-
-            unsigned int n = poisson(rng_num);
-
-            // try inserting in the overlap volume
-            unsigned int n_intersect = new_config ? pos_j_new.size() : pos_j_old.size();
-
-            // allocate space to construct the kernel matrix
-            Eigen::VectorXd laplace(n);
-
-            // for every depletant
             #ifdef ENABLE_TBB
-            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
+            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, ntrial),
                 [=, &shape_old, &shape_i,
                     &pos_j_new, &orientation_j_new, &type_j_new,
                     &pos_j_old, &orientation_j_old, &type_j_old,
-                    &sign_i,
-                    &laplace,
-                    &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& t) {
-            for (unsigned int l = t.begin(); l != t.end(); ++l)
+                    &numerator_type, &denominator_type,
+                    &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& w) {
+            for (unsigned int i_trial = w.begin(); i_trial != w.end(); ++i_trial)
             #else
-            for (unsigned int l = 0; l < n; ++l)
+            for (unsigned int i_trial = 0; i_trial < ntrial; ++i_trial)
             #endif
                 {
-                hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                        new_config ? seed_i_new : seed_i_old, type_a+type_b*ntypes, l);
+                bool test_new = !select || !i_trial;
 
-                if (! shape_i.ignoreStatistics())
-                    {
-                    #ifdef ENABLE_TBB
-                    thread_implicit_counters[m_depletant_idx(type_a,type_b)].local().insert_count++;
-                    #else
-                    implicit_counters[m_depletant_idx(type_a,type_b)].insert_count++;
-                    #endif
-                    }
-
-                // rejection-free sampling
-                vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_i, ndim));
-
-                Shape shape_test(quat<Scalar>(), this->m_params[type_a]);
-                quat<Scalar> o;
-                if (shape_test.hasOrientation())
-                    {
-                    o = generateRandomOrientation(my_rng, ndim);
-                    }
-                if (shape_test.hasOrientation())
-                    shape_test.orientation = o;
-
-                // Check if the new (old) configuration of particle i generates an overlap
-                bool overlap_i = false;
-
-                vec3<Scalar> r_i_test = pos_test - (new_config ? pos_i : pos_i_old);
-                    {
-                    const Shape& shape = !new_config ? shape_old : shape_i;
-
-                    OverlapReal rsq = dot(r_i_test,r_i_test);
-                    OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
-                    bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
-
-                    if (h_overlaps[this->m_overlap_idx(type_a, typ_i)])
-                        {
-                        #ifdef ENABLE_TBB
-                        thread_counters.local().overlap_checks++;
-                        #else
-                        counters.overlap_checks++;
-                        #endif
-
-                        unsigned int err = 0;
-                        if (circumsphere_overlap &&
-                            test_overlap(r_i_test, shape, shape_test, err))
-                            {
-                            overlap_i = true;
-                            }
-                        if (err)
-                        #ifdef ENABLE_TBB
-                            thread_counters.local().overlap_err_count++;
-                        #else
-                            counters.overlap_err_count++;
-                        #endif
-                        }
-                    }
-
-                // Mayer f-function
-                Scalar f_i = 0.0;
+                detail::OBB obb_i = test_new ? obb_i_new : obb_i_old;
 
                 if (this->m_patch)
                     {
-                    // compute interaction with particle i
-                    OverlapReal r_cut_patch_i = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(typ_i);
-                    r_cut_patch_i += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-
-                    OverlapReal rsq = dot(r_i_test,r_i_test);
-
-                    if (rsq <= r_cut_patch_i*r_cut_patch_i)
-                        {
-                        const quat<Scalar> orientation_i = !new_config ? shape_old.orientation : shape_i.orientation;
-                        float U = this->m_patch->energy(r_i_test,
-                                                  typ_i,
-                                                  quat<float>(orientation_i),
-                                                  h_diameter[i],
-                                                  h_charge[i],
-                                                  type_a,
-                                                  quat<float>(shape_test.orientation),
-                                                  0.0,
-                                                  0.0);
-                        f_i = 1.0-std::exp(-U);
-                        }
+                    OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                    delta += 0.5*this->m_patch->getAdditiveCutoff(type_a);
+                    obb_i.lengths.x = std::max(obb_i.lengths.x, (OverlapReal) r_cut_patch + delta);
+                    obb_i.lengths.y = std::max(obb_i.lengths.y, (OverlapReal) r_cut_patch + delta);
+                    obb_i.lengths.z = std::max(obb_i.lengths.z, (OverlapReal) r_cut_patch + delta);
                     }
 
-                // check overlap with neighbors
-                bool has_overlap = false;
-                unsigned int tag_i = h_tag[i];
+                Scalar V_i = obb_i.getVolume(ndim);
 
-                for (unsigned int m = 0; m < n_intersect; ++m)
-                    {
-                    unsigned int type_m = new_config ? type_j_new[m] : type_j_old[m];
-                    Shape shape_m(new_config ? orientation_j_new[m] : orientation_j_old[m], this->m_params[type_m]);
-                    vec3<Scalar> r_mk = (new_config ? pos_j_new[m] : pos_j_old[m]) - pos_test;
-
-                    #ifdef ENABLE_TBB
-                    thread_counters.local().overlap_checks++;
-                    #else
-                    counters.overlap_checks++;
-                    #endif
-
-                    unsigned int err = 0;
-
-                    // check circumsphere overlap
-                    OverlapReal rsq = dot(r_mk,r_mk);
-                    OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape_m.getCircumsphereDiameter();
-                    bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
-
-                    bool overlap_j = h_overlaps[this->m_overlap_idx(type_a,type_m)]
-                        && circumsphere_overlap
-                        && test_overlap(r_mk, shape_test, shape_m, err);
-
-                    unsigned int tag_m = new_config ? tag_j_new[m] : tag_j_old[m];
-                    if (overlap_j && tag_m > tag_i)
-                        {
-                        has_overlap = true;
-                        }
-
-                    if (err)
-                    #ifdef ENABLE_TBB
-                        thread_counters.local().overlap_err_count++;
-                    #else
-                        counters.overlap_err_count++;
-                    #endif
-
-                    if (has_overlap)
-                        break;
-                    } // end loop over intersections
-
-                // Mayer f-function of the union
-                Scalar f_j = 0.0;
-
-                if (this->m_patch)
-                    {
-                    // compute energy due to neighbors
-                    float U_j = 0.0;
-
-                    OverlapReal r_cut_patch = this->m_patch->getRCut();
-                    for (unsigned int m = 0; m < n_intersect; ++m)
-                        {
-                        unsigned int type_m = new_config ? type_j_new[m] : type_j_old[m];
-                        quat<Scalar> orientation_m  = new_config ? orientation_j_new[m] : orientation_j_old[m];
-                        vec3<Scalar> r_mk = (new_config ? pos_j_new[m] : pos_j_old[m]) - pos_test;
-
-                        OverlapReal r_cut_patch_m = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(type_m);
-                        r_cut_patch_m += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-
-                        // check circumsphere overlap
-                        float rsq = dot(r_mk,r_mk);
-                        bool within_rcut = rsq <= (r_cut_patch_m*r_cut_patch_m);
-
-                        unsigned int tag_m = new_config ? tag_j_new[m] : tag_j_old[m];
-                        if (within_rcut && tag_m > tag_i)
-                            {
-                            float U = this->m_patch->energy(r_mk,
-                                                      type_a,
-                                                      quat<float>(shape_test.orientation),
-                                                      0.0,
-                                                      0.0,
-                                                      type_m,
-                                                      quat<float>(orientation_m),
-                                                      0.0, // h_diameter[..]
-                                                      0.0 // h_charge[..]
-                                                      );
-                            U_j += U;
-                            }
-                        }
-
-                    f_j = 1.0-std::exp(-U_j);
-                    }
-
-                f_i = overlap_i + (1-overlap_i)*f_i;
-                f_j = has_overlap + (1-has_overlap)*f_j;
-
-                // store in temp array
-//                laplace(l) = 1 - f_i + f_i*f_j;
-                laplace(l) = f_i*f_j;
-                } // end loop over depletants
-            #ifdef ENABLE_TBB
-                });
-            #endif
-
-            // construct the kernel matrix O(N^2)
-            Eigen::MatrixXd K_prime(n,n);
-
-            // depletant i
-            #ifdef ENABLE_TBB
-            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
-                [=, &K_prime,
-                    &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& t) {
-            for (unsigned int l = t.begin(); l != t.end(); ++l)
-            #else
-            for (unsigned int l = 0; l < n; ++l)
-            #endif
-                {
-                hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                        new_config ? seed_i_new : seed_i_old, type_a+type_b*ntypes, l);
-
-                vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_i, ndim));
-
-                Shape shape_test(quat<Scalar>(), this->m_params[type_a]);
-                quat<Scalar> o;
-                if (shape_test.hasOrientation())
-                    {
-                    o = generateRandomOrientation(my_rng, ndim);
-                    }
-                if (shape_test.hasOrientation())
-                    shape_test.orientation = o;
-
-                // depletant j
-                #ifdef ENABLE_TBB
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(l, (unsigned int)n),
-                    [=, &K_prime,
-                        &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& u) {
-                for (unsigned int m = u.begin(); m != u.end(); ++m)
-                #else
-                for (unsigned int m = l; m < n; ++m)
-                #endif
-                    {
-                    hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                            new_config ? seed_i_new : seed_i_old, type_a+type_b*ntypes, m);
-
-                    // rejection-free sampling
-                    vec3<Scalar> pos_test_neighbor(generatePositionInOBB(my_rng, obb_i, ndim));
-
-                    Shape shape_test_neighbor(quat<Scalar>(), this->m_params[type_a]);
-                    quat<Scalar> o;
-                    if (shape_test_neighbor.hasOrientation())
-                        {
-                        o = generateRandomOrientation(my_rng, ndim);
-                        }
-                    if (shape_test_neighbor.hasOrientation())
-                        shape_test_neighbor.orientation = o;
-
-                    vec3<Scalar> dr(pos_test_neighbor-pos_test);
-                    OverlapReal rsq = dot(dr,dr);
-                    OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape_test_neighbor.getCircumsphereDiameter();
-                    bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
-
-                    unsigned int err = 0.0;
-                    bool overlap_ij = circumsphere_overlap && test_overlap(dr, shape_test, shape_test_neighbor, err);
-
-                    if (err)
-                    #ifdef ENABLE_TBB
-                        thread_counters.local().overlap_err_count++;
-                    #else
-                        counters.overlap_err_count++;
-                    #endif
-
-                    float U_ij = 0.0;
-                    if (this->m_patch && !overlap_ij)
-                        {
-                        OverlapReal r_cut_patch = this->m_patch->getRCut();
-                        OverlapReal r_cut_patch_ij = r_cut_patch + this->m_patch->getAdditiveCutoff(type_a);
-
-                        if (rsq <= r_cut_patch_ij*r_cut_patch_ij)
-                            {
-                            U_ij = this->m_patch->energy(dr,
-                                                      type_a,
-                                                      quat<float>(shape_test.orientation),
-                                                      0.0,
-                                                      0.0,
-                                                      type_a,
-                                                      quat<float>(shape_test_neighbor.orientation),
-                                                      0.0,
-                                                      0.0);
-                            }
-                        }
-
-                    float f_ij_12 = overlap_ij + (1-overlap_ij)*fast::sqrt(1-std::exp(-U_ij));
-
-                    // <e^(-sum_i x_i)> = det(I - K_prime)
-                    K_prime(l,m) = -(double) f_ij_12*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m))/gamma;
-
-                    if (l == m)
-                        {
-                        K_prime(l,m) += 1;
-                        }
-
-                    // make symmetric
-                    K_prime(m,l) = K_prime(l,m);
-                    } // end loop over depletant j
-                #ifdef ENABLE_TBB
-                    });
-                #endif
-                } // end loop over depletant i
-            #ifdef ENABLE_TBB
-                });
-            #endif
-
-            if (n > 0)
-                {
-                // diagonalize to compute the determinant
-                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(n);
-                es.compute(K_prime, Eigen::EigenvaluesOnly);
-                auto alpha = es.eigenvalues();
-
-                #ifdef ENABLE_TBB
-                tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
-                    [=, &thread_ln_denominator, &thread_ln_numerator,
-                        &sign_i](const tbb::blocked_range<unsigned int>& t) {
-                for (unsigned int l = t.begin(); l != t.end(); ++l)
-                #else
-                for (unsigned int l = 0; l < n; ++l)
-                #endif
-                    {
-                    if (alpha(l) < 0.0 && new_config)
-                        {
-                        sign_i ^= 1;
-                        }
-
-                    if (!new_config)
-                        {
-                        #ifdef ENABLE_TBB
-                        thread_ln_denominator.local() += log(std::abs(alpha(l)));
-                        #else
-                        ln_denominator += log(std::abs(alpha(l)));
-                        #endif
-                        }
-                    else
-                        {
-                        #ifdef ENABLE_TBB
-                        thread_ln_numerator.local() += log(std::abs(alpha(l)));
-                        #else
-                        ln_numerator += log(std::abs(alpha(l)));
-                        #endif
-                        }
-                    } // end loop over depletant j
-                #ifdef ENABLE_TBB
-                    });
-                #endif
-                }
-
-            // check auxiliary variable
-            if (new_config && sign_i.load() != sign_i_new)
-                {
-                reject = true;
-                throw false;
-                }
-
-            // insert into each neighbor volume
-            #ifdef ENABLE_TBB
-            tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n_intersect),
-                [=, &shape_old, &shape_i,
-                    &pos_j_new, &orientation_j_new, &type_j_new,
-                    &pos_j_old, &orientation_j_old, &type_j_old,
-                    &reject,
-                    &thread_ln_denominator, &thread_ln_numerator,
-                    &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& y) {
-            for (unsigned int k = y.begin(); k != y.end(); ++k)
-            #else
-            for (unsigned int k = 0; k < n_intersect; ++k)
-            #endif
-                {
-                detail::OBB obb_k;
-                Scalar V_k;
-                unsigned int typ_k = new_config ? type_j_new[k] : type_j_old[k];
-                Shape shape_k(new_config ? orientation_j_new[k] : orientation_j_old[k], this->m_params[typ_k]);
-
-                    {
-                    // get shape OBB
-                    vec3<Scalar> pos_k(new_config ? pos_j_new[k] : pos_j_old[k]);
-                    obb_k = shape_k.getOBB(pos_k);
-
-                    // extend by depletant radius
-                    Shape shape_test(quat<Scalar>(), m_params[type_a]);
-
-                    Scalar r = 0.5*shape_test.getCircumsphereDiameter();
-                    obb_k.lengths.x += r;
-                    obb_k.lengths.y += r;
-                    obb_k.lengths.z += r;
-
-                    if (this->m_patch)
-                        {
-                        Scalar r_cut_patch = this->m_patch->getRCut();
-                        OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_k);
-                        delta += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-                        obb_k.lengths.x = std::max(obb_k.lengths.x, (OverlapReal) r_cut_patch + delta);
-                        obb_k.lengths.y = std::max(obb_k.lengths.y, (OverlapReal) r_cut_patch + delta);
-                        obb_k.lengths.z = std::max(obb_k.lengths.z, (OverlapReal) r_cut_patch + delta);
-                        }
-
-                    V_k = obb_k.getVolume(ndim);
-                    }
-
-                // random number of depletants uniquely for this volume
-                Scalar lambda = gamma*std::abs(fugacity)*V_k;
+                // chooose the number of depletants in the insertion OBB
+                Scalar lambda = std::abs(fugacity)*V_i;
                 hoomd::PoissonDistribution<Scalar> poisson(lambda);
-                unsigned int ntypes = this->m_pdata->getNTypes();
-                unsigned int seed_j = new_config ? seed_j_new[k] : seed_j_old[k];
                 hoomd::RandomGenerator rng_num(hoomd::RNGIdentifier::HPMCDepletantNum,
-                    type_a*ntypes+type_b, seed_j);
+                    type_a, test_new ? seed_i_new : seed_i_old, i_trial);
 
                 unsigned int n = poisson(rng_num);
 
-                std::atomic<unsigned int> sign_k_new(0);
-                std::atomic<unsigned int> sign_k_old(0);
+                // try inserting in the overlap volume
+                unsigned int n_intersect = test_new ? pos_j_new.size() : pos_j_old.size();
 
-                Eigen::VectorXd laplace_k(n);
-                Eigen::VectorXd laplace_k_other(n);
+                // allocate space to construct the kernel matrix
+                Eigen::VectorXd laplace(n);
 
                 // for every depletant
                 #ifdef ENABLE_TBB
@@ -3220,8 +2815,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     [=, &shape_old, &shape_i,
                         &pos_j_new, &orientation_j_new, &type_j_new,
                         &pos_j_old, &orientation_j_old, &type_j_old,
-                        &sign_k_new, &sign_k_old,
-                        &laplace_k, &laplace_k_other,
+                        &laplace,
                         &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& t) {
                 for (unsigned int l = t.begin(); l != t.end(); ++l)
                 #else
@@ -3229,7 +2823,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 #endif
                     {
                     hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                        seed_j, type_a+type_b*ntypes, l);
+                            test_new ? seed_i_new : seed_i_old, type_a, i_trial, l);
 
                     if (! shape_i.ignoreStatistics())
                         {
@@ -3241,7 +2835,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         }
 
                     // rejection-free sampling
-                    vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_k, ndim));
+                    vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_i, ndim));
 
                     Shape shape_test(quat<Scalar>(), this->m_params[type_a]);
                     quat<Scalar> o;
@@ -3252,69 +2846,12 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     if (shape_test.hasOrientation())
                         shape_test.orientation = o;
 
-                    // Check if the particle j overlaps
-                    bool overlap_k = false;
-
-                    vec3<Scalar> r_k_test = pos_test - (new_config ? pos_j_new[k] : pos_j_old[k]);
-
-                        {
-                        OverlapReal rsq = dot(r_k_test,r_k_test);
-                        OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape_k.getCircumsphereDiameter();
-                        bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
-
-                        if (h_overlaps[this->m_overlap_idx(type_a, typ_k)])
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_counters.local().overlap_checks++;
-                            #else
-                            counters.overlap_checks++;
-                            #endif
-
-                            unsigned int err = 0;
-                            if (circumsphere_overlap &&
-                                test_overlap(r_k_test, shape_k, shape_test, err))
-                                {
-                                overlap_k = true;
-                                }
-                            if (err)
-                            #ifdef ENABLE_TBB
-                                thread_counters.local().overlap_err_count++;
-                            #else
-                                counters.overlap_err_count++;
-                            #endif
-                            }
-                        }
-
-                    // Mayer f
-                    float f_k = 0.0;
-                    if (this->m_patch)
-                        {
-                        OverlapReal r_cut_patch_k = this->m_patch->getRCut();
-                        r_cut_patch_k += 0.5*this->m_patch->getAdditiveCutoff(typ_k);
-                        r_cut_patch_k += 0.5*this->m_patch->getAdditiveCutoff(type_a);
-
-                        float rsq = dot(r_k_test,r_k_test);
-                        if (rsq <= (r_cut_patch_k*r_cut_patch_k))
-                            {
-                            float U_k = this->m_patch->energy(r_k_test,
-                                                      typ_k,
-                                                      shape_k.orientation,
-                                                      0.0, //h_diameter[..]
-                                                      0.0, //h_charge[..]
-                                                      type_a,
-                                                      quat<float>(shape_test.orientation),
-                                                      0.0,
-                                                      0.0);
-                            f_k = 1.0-exp(-U_k);
-                            }
-                        }
-
-                    // does particle i overlap in current configuration?
+                    // Check if the new (old) configuration of particle i generates an overlap
                     bool overlap_i = false;
 
                     vec3<Scalar> r_i_test = pos_test - (new_config ? pos_i : pos_i_old);
                         {
-                        const Shape& shape = new_config ? shape_i : shape_old;
+                        const Shape& shape = !new_config ? shape_old : shape_i;
 
                         OverlapReal rsq = dot(r_i_test,r_i_test);
                         OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
@@ -3343,95 +2880,41 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             }
                         }
 
-                    // does particle i overlap in the other configuration?
-                    bool overlap_i_other = false;
-
-                    vec3<Scalar> r_i_test_other = pos_test - (!new_config ? pos_i : pos_i_old);
-                        {
-                        const Shape& shape = !new_config ? shape_i : shape_old;
-
-                        OverlapReal rsq = dot(r_i_test_other,r_i_test_other);
-                        OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
-                        bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
-
-                        if (h_overlaps[this->m_overlap_idx(type_a, typ_i)])
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_counters.local().overlap_checks++;
-                            #else
-                            counters.overlap_checks++;
-                            #endif
-
-                            unsigned int err = 0;
-                            if (circumsphere_overlap &&
-                                test_overlap(r_i_test_other, shape, shape_test, err))
-                                {
-                                overlap_i_other = true;
-                                }
-                            if (err)
-                            #ifdef ENABLE_TBB
-                                thread_counters.local().overlap_err_count++;
-                            #else
-                                counters.overlap_err_count++;
-                            #endif
-                            }
-                        }
-
-                    // does test particle interact with i in current config?
-                    bool interact_i = false;
-                    bool interact_i_other = false;
-                    float U_i = 0.0;
-                    float U_i_other = 0.0;
+                    // Mayer f-function
+                    Scalar f_i = 0.0;
 
                     if (this->m_patch)
                         {
-                        OverlapReal r_cut_patch_i = this->m_patch->getRCut();
-                        r_cut_patch_i += 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                        // compute interaction with particle i
+                        OverlapReal r_cut_patch_i = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(typ_i);
                         r_cut_patch_i += 0.5*this->m_patch->getAdditiveCutoff(type_a);
 
-                        float rsq = dot(r_i_test,r_i_test);
-                        if (rsq <= (r_cut_patch_i*r_cut_patch_i))
+                        OverlapReal rsq = dot(r_i_test,r_i_test);
+
+                        if (rsq <= r_cut_patch_i*r_cut_patch_i)
                             {
-                            interact_i = true;
+                            const quat<Scalar> orientation_i = !new_config ? shape_old.orientation : shape_i.orientation;
                             float U = this->m_patch->energy(r_i_test,
                                                       typ_i,
-                                                      new_config ? shape_i.orientation : shape_old.orientation,
+                                                      quat<float>(orientation_i),
                                                       h_diameter[i],
                                                       h_charge[i],
                                                       type_a,
                                                       quat<float>(shape_test.orientation),
                                                       0.0,
                                                       0.0);
-                            U_i = U;
-                            }
-
-                        rsq = dot(r_i_test_other,r_i_test_other);
-                        if (rsq <= (r_cut_patch_i*r_cut_patch_i))
-                            {
-                            interact_i_other = true;
-                            float U = this->m_patch->energy(r_i_test_other,
-                                                      typ_i,
-                                                      !new_config ? shape_i.orientation : shape_old.orientation,
-                                                      h_diameter[i],
-                                                      h_charge[i],
-                                                      type_a,
-                                                      quat<float>(shape_test.orientation),
-                                                      0.0,
-                                                      0.0);
-                            U_i_other = U;
+                            f_i = 1.0-std::exp(-U);
                             }
                         }
 
-                    unsigned int tag_i = h_tag[i];
-                    unsigned int tag_k = new_config ? tag_j_new[k] : tag_j_old[k];
-
+                    // check overlap with neighbors
                     bool has_overlap = false;
+
                     for (unsigned int m = 0; m < n_intersect; ++m)
                         {
-                        unsigned int type_m = new_config ? type_j_new[m] : type_j_old[m];
-                        Shape shape_m(new_config ? orientation_j_new[m] : orientation_j_old[m],
-                            this->m_params[type_m]);
-                        vec3<Scalar> r_m_test = vec3<Scalar>(pos_test) - (new_config ? pos_j_new[m] : pos_j_old[m]);
+                        unsigned int type_m = test_new ? type_j_new[m] : type_j_old[m];
+                        Shape shape_m(test_new ? orientation_j_new[m] : orientation_j_old[m], this->m_params[type_m]);
+                        vec3<Scalar> r_mk = (test_new ? pos_j_new[m] : pos_j_old[m]) - pos_test;
 
                         #ifdef ENABLE_TBB
                         thread_counters.local().overlap_checks++;
@@ -3442,20 +2925,17 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         unsigned int err = 0;
 
                         // check circumsphere overlap
-                        OverlapReal rsq = dot(r_m_test,r_m_test);
+                        OverlapReal rsq = dot(r_mk,r_mk);
                         OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape_m.getCircumsphereDiameter();
                         bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
 
-                        bool overlap_m = h_overlaps[this->m_overlap_idx(type_a,type_m)]
+                        bool overlap_j = h_overlaps[this->m_overlap_idx(type_a,type_m)]
                             && circumsphere_overlap
-                            && test_overlap(r_m_test, shape_m, shape_test, err);
+                            && test_overlap(r_mk, shape_test, shape_m, err);
 
-                        unsigned int tag_m = new_config ? tag_j_new[m] : tag_j_old[m];
-
-                        if (overlap_m && tag_m > tag_k)
+                        if (overlap_j)
                             {
                             has_overlap = true;
-                            break;
                             }
 
                         if (err)
@@ -3467,78 +2947,76 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                         if (has_overlap)
                             break;
-                        }
+                        } // end loop over intersections
 
-                    float U_m = 0.0;
+                    // Mayer f-function of the union
+                    Scalar f_j = 0.0;
+
                     if (this->m_patch)
                         {
+                        // compute energy due to neighbors
+                        float U_j = 0.0;
+
+                        OverlapReal r_cut_patch = this->m_patch->getRCut();
                         for (unsigned int m = 0; m < n_intersect; ++m)
                             {
-                            unsigned int type_m = new_config ? type_j_new[m] : type_j_old[m];
-                            quat<Scalar> orientation_m = new_config ? orientation_j_new[m] : orientation_j_old[m];
-                            vec3<Scalar> r_m_test = vec3<Scalar>(pos_test) - (new_config ? pos_j_new[m] : pos_j_old[m]);
+                            unsigned int type_m = test_new ? type_j_new[m] : type_j_old[m];
+                            quat<Scalar> orientation_m  = test_new ? orientation_j_new[m] : orientation_j_old[m];
+                            vec3<Scalar> r_mk = (test_new ? pos_j_new[m] : pos_j_old[m]) - pos_test;
 
                             OverlapReal r_cut_patch_m = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(type_m);
                             r_cut_patch_m += 0.5*this->m_patch->getAdditiveCutoff(type_a);
 
-                            OverlapReal rsq = dot(r_m_test,r_m_test);
+                            // check circumsphere overlap
+                            float rsq = dot(r_mk,r_mk);
                             bool within_rcut = rsq <= (r_cut_patch_m*r_cut_patch_m);
 
-                            unsigned int tag_m = new_config ? tag_j_new[m] : tag_j_old[m];
-                            if (within_rcut && tag_m > tag_k)
+                            if (within_rcut)
                                 {
-                                float U = this->m_patch->energy(r_m_test,
-                                                          type_m,
-                                                          quat<float>(orientation_m),
-                                                          0.0, // h_diameter[..]
-                                                          0.0, // h_charge[..]
+                                float U = this->m_patch->energy(r_mk,
                                                           type_a,
                                                           quat<float>(shape_test.orientation),
                                                           0.0,
-                                                          0.0
+                                                          0.0,
+                                                          type_m,
+                                                          quat<float>(orientation_m),
+                                                          0.0, // h_diameter[..]
+                                                          0.0 // h_charge[..]
                                                           );
-                                U_m += U;
+                                U_j += U;
                                 }
                             }
+
+                        f_j = 1.0-std::exp(-U_j);
                         }
 
-                    // Mayer f
-                    f_k = overlap_k + (1-overlap_k)*f_k;
+                    f_i = overlap_i + (1-overlap_i)*f_i;
+                    f_j = has_overlap + (1-has_overlap)*f_j;
 
-                    float U_neigh = U_m + ((tag_i > tag_k) ? U_i : 0);
-                    Scalar f_neigh = 1.0 - std::exp(-U_neigh);
-                    bool overlap_neigh = has_overlap || (tag_i > tag_k ? overlap_i : false);
-                    f_neigh = overlap_neigh + (1-overlap_neigh)*f_neigh;
-
-                    float U_neigh_other = U_m;
-                    double f_neigh_other = 1.0 - std::exp(-U_neigh_other);
-                    bool overlap_neigh_other = has_overlap;
-                    f_neigh_other = overlap_neigh_other + (1-overlap_neigh_other)*f_neigh_other;
-
-                    laplace_k(l) = f_k*f_neigh;
-                    laplace_k_other(l) = f_k*f_neigh_other;
-                    }
+                    laplace(l) = 1-f_i*(1-f_j);
+                    } // end loop over depletants
                 #ifdef ENABLE_TBB
-                });
+                    });
                 #endif
 
-                // construct the kernel matrices O(N^2)
-                Eigen::MatrixXd K_prime(n,n);
-                Eigen::MatrixXd K_prime_other(n,n);
+                // construct the kernel matrix of the determinantal and the permenental process
+                Eigen::MatrixXd K_det(n,n);
+                Eigen::MatrixXd K_per(n,n);
 
                 // depletant i
                 #ifdef ENABLE_TBB
                 tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
-                    [=, &K_prime, &K_prime_other, &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& t) {
+                    [=, &K_det, &K_per,
+                        &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& t) {
                 for (unsigned int l = t.begin(); l != t.end(); ++l)
                 #else
                 for (unsigned int l = 0; l < n; ++l)
                 #endif
                     {
                     hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                        seed_j, type_a+type_b*ntypes, l);
+                            test_new ? seed_i_new : seed_i_old, type_a, i_trial, l);
 
-                    vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_k, ndim));
+                    vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_i, ndim));
 
                     Shape shape_test(quat<Scalar>(), this->m_params[type_a]);
                     quat<Scalar> o;
@@ -3552,16 +3030,18 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     // depletant j
                     #ifdef ENABLE_TBB
                     tbb::parallel_for(tbb::blocked_range<unsigned int>(l, (unsigned int)n),
-                        [=, &K_prime, &K_prime_other, &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& u) {
+                        [=, &K_det, &K_per,
+                            &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& u) {
                     for (unsigned int m = u.begin(); m != u.end(); ++m)
                     #else
                     for (unsigned int m = l; m < n; ++m)
                     #endif
                         {
                         hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                            seed_j, type_a+type_b*ntypes, m);
+                                test_new ? seed_i_new : seed_i_old, type_a, i_trial, m);
 
-                        vec3<Scalar> pos_test_neighbor(generatePositionInOBB(my_rng, obb_k, ndim));
+                        // rejection-free sampling
+                        vec3<Scalar> pos_test_neighbor(generatePositionInOBB(my_rng, obb_i, ndim));
 
                         Shape shape_test_neighbor(quat<Scalar>(), this->m_params[type_a]);
                         quat<Scalar> o;
@@ -3578,7 +3058,8 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
 
                         unsigned int err = 0.0;
-                        bool overlap_ij = circumsphere_overlap && test_overlap(dr, shape_test, shape_test_neighbor, err);
+                        bool overlap_ij = h_overlaps[this->m_overlap_idx(type_a, type_a)]
+                                          && circumsphere_overlap && test_overlap(dr, shape_test, shape_test_neighbor, err);
 
                         if (err)
                         #ifdef ENABLE_TBB
@@ -3588,7 +3069,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         #endif
 
                         float U_ij = 0.0;
-                        if (this->m_patch && !overlap_ij)
+                        if (this->m_patch && !this->m_patch_log && !overlap_ij)
                             {
                             OverlapReal r_cut_patch = this->m_patch->getRCut();
                             OverlapReal r_cut_patch_ij = r_cut_patch + this->m_patch->getAdditiveCutoff(type_a);
@@ -3607,24 +3088,19 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                                 }
                             }
 
-                        float f_ij_12 = overlap_ij + (1-overlap_ij)*fast::sqrt(1-std::exp(-U_ij));
 
-                        // <e^(-sum_i x_i)> = det(I - K_prime)
-                        K_prime(l,m) = -(double)f_ij_12*fast::sqrt(1-laplace_k(l))*fast::sqrt(1-laplace_k(m))/gamma;
-                        if (l==m)
-                            {
-                            K_prime(l,m) += 1;
-                            }
+                        // distribute the potential of mean force onto the bosonic and fermionic kernels
 
-                        K_prime_other(l,m) = -(double)f_ij_12*fast::sqrt(1-laplace_k_other(l))*fast::sqrt(1-laplace_k_other(m))/gamma;
-                        if (l==m)
-                            {
-                            K_prime_other(l,m) += 1;
-                            }
+                        // cov(r,r') = delta(r,r') + rho^2 (g-1)
+                        K_per(l,m) = (l == m) + ((U_ij < 0) ? fast::sqrt(std::exp(-U_ij)-1) : 0);
 
-                        // make symmetric
-                        K_prime(m,l) = K_prime(l,m);
-                        K_prime_other(m,l) = K_prime_other(l,m);
+                        // Laplace functional: <e^(-sum_i x_i)> = det(I - K_prime)
+                        double K = (overlap_ij || l == m) + (1-(overlap_ij || l == m))*((U_ij > 0) ? fast::sqrt(1-std::exp(-U_ij)) : 0);
+                        K_det(l,m) = (l == m) - K*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
+
+                        // make them symmetric
+                        K_det(m,l) = K_det(l,m);
+                        K_per(m,l) = K_per(l,m);
                         } // end loop over depletant j
                     #ifdef ENABLE_TBB
                         });
@@ -3634,130 +3110,94 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     });
                 #endif
 
+                #ifdef ENABLE_TBB
+                // deltaF == free energy difference
+                tbb::enumerable_thread_specific<Scalar> det_thread(1.0);
+                #endif
+                double det(1.0);
+
                 if (n > 0)
                     {
                     // diagonalize to compute the determinant
                     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(n);
-
-                    // in the presence of i
-                    es.compute(K_prime, Eigen::EigenvaluesOnly);
+                    es.compute(K_det, Eigen::EigenvaluesOnly);
                     auto alpha = es.eigenvalues();
 
                     #ifdef ENABLE_TBB
                     tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
-                        [=, &thread_ln_denominator, &thread_ln_numerator,
-                            &sign_k_new, &sign_k_old](const tbb::blocked_range<unsigned int>& t) {
+                        [=, &det_thread](const tbb::blocked_range<unsigned int>& t) {
                     for (unsigned int l = t.begin(); l != t.end(); ++l)
                     #else
                     for (unsigned int l = 0; l < n; ++l)
                     #endif
                         {
-                        if (alpha(l) < 0.0)
-                            {
-                            if (new_config)
-                                sign_k_new ^= 1;
-                            else
-                                sign_k_old ^= 1;
-                            }
-
-                        if (!new_config)
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_ln_denominator.local() += log(std::abs(alpha(l)));
-                            #else
-                            ln_denominator += log(std::abs(alpha(l)));
-                            #endif
-                            }
-                        else
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_ln_numerator.local() += log(std::abs(alpha(l)));
-                            #else
-                            ln_numerator += log(std::abs(alpha(l)));
-                            #endif
-                            }
-                        }
-                    #ifdef ENABLE_TBB
-                        });
-                    #endif
-
-                    // and without i
-                    es.compute(K_prime_other, Eigen::EigenvaluesOnly);
-                    alpha = es.eigenvalues();
-
-                    #ifdef ENABLE_TBB
-                    tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
-                        [=, &thread_ln_denominator, &thread_ln_numerator,
-                            &sign_k_new, &sign_k_old](const tbb::blocked_range<unsigned int>& t) {
-                    for (unsigned int l = t.begin(); l != t.end(); ++l)
-                    #else
-                    for (unsigned int l = 0; l < n; ++l)
-                    #endif
-                        {
-                        if (alpha(l) < 0.0)
-                            {
-                            if (new_config)
-                                sign_k_new ^= 1;
-                            else
-                                sign_k_old ^= 1;
-                            }
-
-                        if (new_config)
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_ln_denominator.local() += log(std::abs(alpha(l)));
-                            #else
-                            ln_denominator += log(std::abs(alpha(l)));
-                            #endif
-                            }
-                        else
-                            {
-                            #ifdef ENABLE_TBB
-                            thread_ln_numerator.local() += log(std::abs(alpha(l)));
-                            #else
-                            ln_numerator += log(std::abs(alpha(l)));
-                            #endif
-                            }
-                        }
+                        #ifdef ENABLE_TBB
+                        det_thread.local() *= alpha(l);
+                        #else
+                        det *= alpha(l);
+                        #endif
+                        } // end loop over depletant j
                     #ifdef ENABLE_TBB
                         });
                     #endif
                     }
 
-                if ((new_config && sign_k_new.load()) || (!new_config && sign_k_old.load()))
-                    {
-                    reject = true;
-                    throw false;
-                    }
-
-                } // end loop over intersections
                 #ifdef ENABLE_TBB
-                });
+                for (auto d: det_thread)
+                    {
+                    det *= d;
+                    }
                 #endif
+
+                if (new_config)
+                    numerator_type[i_trial] = det;
+                else
+                    denominator_type[i_trial] = det;
+                } // end loop over i_trial
+            #ifdef ENABLE_TBB
+                });
+            #endif
             } // end loop over configurations
         #ifdef ENABLE_TBB
             });
         #endif
 
-        #ifdef ENABLE_TBB
-        for (auto ln_denom_thread : thread_ln_denominator)
+        // asymmetric acceptance probability
+        double r = 0.0;
+        if (!select)
             {
-            ln_denominator += ln_denom_thread;
+            for (unsigned int i = 0; i < ntrial; ++i)
+                {
+                r += numerator_type[i]/ntrial;
+                }
             }
-        #endif
+        else
+            {
+            double r_inv = 0.0;
 
-        #ifdef ENABLE_TBB
-        for (auto ln_num_thread : thread_ln_numerator)
-            {
-            ln_numerator += ln_num_thread;
+            for (unsigned int i = 0; i < ntrial; ++i)
+                {
+                r_inv += denominator_type[i]/ntrial;
+                }
+            r = 1/r_inv;
             }
-        #endif
+
+        r_tot *= r;
         } // end loop over type_a
 
-    } catch (bool b) { }
+    // check auxiliary variable
+    if ((r_tot < 0) != sign_i_new)
+        {
+        reject = true;
+        }
 
-    Scalar u = hoomd::UniformDistribution<Scalar>()(rng_depletants);
-    bool accept = !reject && u <= exp(ln_numerator-ln_denominator);
+    r_tot = std::abs(r_tot);
+
+    double u = hoomd::UniformDistribution<double>()(rng_depletants);
+
+    // MH step
+    bool accept = !reject && u < r_tot;
+//    bool accept = !reject && numerator != 0 && u <= numerator/denominator;
 
     #ifdef ENABLE_TBB
     // reduce counters
