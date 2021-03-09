@@ -2907,6 +2907,66 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             }
                         }
 
+                    // other configuration
+                    bool overlap_i_other = false;
+                    r_i_test = pos_test - (!new_config ? pos_i : pos_i_old);
+                        {
+                        const Shape& shape = new_config ? shape_old : shape_i;
+
+                        OverlapReal rsq = dot(r_i_test,r_i_test);
+                        OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
+                        bool circumsphere_overlap = (rsq*OverlapReal(4.0) <= DaDb * DaDb);
+
+                        if (h_overlaps[this->m_overlap_idx(type_a, typ_i)])
+                            {
+                            #ifdef ENABLE_TBB
+                            thread_counters.local().overlap_checks++;
+                            #else
+                            counters.overlap_checks++;
+                            #endif
+
+                            unsigned int err = 0;
+                            if (circumsphere_overlap &&
+                                test_overlap(r_i_test, shape, shape_test, err))
+                                {
+                                overlap_i_other = true;
+                                }
+                            if (err)
+                            #ifdef ENABLE_TBB
+                                thread_counters.local().overlap_err_count++;
+                            #else
+                                counters.overlap_err_count++;
+                            #endif
+                            }
+                        }
+
+                    // Mayer f-function
+                    double f_i_other = 0.0;
+
+                    if (this->m_patch)
+                        {
+                        // compute interaction with particle i
+                        OverlapReal r_cut_patch_i = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                        r_cut_patch_i += 0.5*this->m_patch->getAdditiveCutoff(type_a);
+
+                        OverlapReal rsq = dot(r_i_test,r_i_test);
+
+                        if (rsq <= r_cut_patch_i*r_cut_patch_i)
+                            {
+                            const quat<Scalar> orientation_i = new_config ? shape_old.orientation : shape_i.orientation;
+                            float U = this->m_patch->energy(r_i_test,
+                                                      typ_i,
+                                                      quat<float>(orientation_i),
+                                                      h_diameter[i],
+                                                      h_charge[i],
+                                                      type_a,
+                                                      quat<float>(shape_test.orientation),
+                                                      0.0,
+                                                      0.0);
+                            f_i_other = 1.0-std::exp(-U);
+                            }
+                        }
+
                     // check overlap with neighbors
                     bool has_overlap = false;
 
@@ -2991,9 +3051,10 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         }
 
                     f_i = overlap_i + (1-overlap_i)*f_i;
+                    f_i_other = overlap_i_other + (1-overlap_i_other)*f_i_other;
                     f_j = has_overlap + (1-has_overlap)*f_j;
 
-                    laplace(l) = 1-f_i*(1-f_j);
+                    laplace(l) = 1-f_i*(1-f_j)*(1-f_i_other);
                     } // end loop over depletants
                 #ifdef ENABLE_TBB
                     });
