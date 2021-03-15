@@ -112,14 +112,16 @@ class implicit_test (unittest.TestCase):
 
         self.system.particles.types.add('B')
 
-    def test_sphere_gamma0(self):
-        self.measure_etap_sphere(all_use_clusters, gamma=0)
+#    def test_sphere_gamma0(self):
+#        self.measure_etap_sphere(all_use_clusters, gamma=0)
 
     def test_sphere_gamma(self): # we could coment out this one if the CI takes too long
-        self.measure_etap_sphere(all_use_clusters, gamma=2.5)
+        self.measure_etap_sphere(all_use_clusters, gamma=3)
+#        self.measure_etap_sphere(all_use_clusters, gamma=1)
 
     def measure_etap_sphere(self, use_clusters, gamma):
         self.mc = hpmc.integrate.sphere(seed=seed)
+        self.mc.overlap_checks.set('B','B',enable=False)
         self.mc.set_params(d=0.1,a=0.1)
         self.mc.shape_param.set('A', diameter=d_sphere)
         self.mc.shape_param.set('B', diameter=d_sphere*q)
@@ -155,6 +157,7 @@ class implicit_test (unittest.TestCase):
             self.mc.set_params(d=0)
             hpmc.update.clusters(self.mc,period=1,seed=seed+1)
 
+        run(200)
         run(4e5,callback=log_callback,callback_period=100)
 
         import BlockAverage
