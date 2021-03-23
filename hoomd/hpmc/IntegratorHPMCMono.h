@@ -2781,7 +2781,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             for (unsigned int i_trial = 0; i_trial < ntrial; ++i_trial)
             #endif
                 {
-                bool test_new = !select || !i_trial;
+                bool test_new = (!select || !i_trial);
 
                 detail::OBB obb_i = test_new ? obb_i_new : obb_i_old;
 
@@ -2910,9 +2910,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                     // other configuration
                     bool overlap_i_other = false;
-                    r_i_test = pos_test - (!new_config ? pos_i : pos_i_old);
+                    r_i_test = pos_test - (!test_new ? pos_i : pos_i_old);
                         {
-                        const Shape& shape = new_config ? shape_old : shape_i;
+                        const Shape& shape = test_new ? shape_old : shape_i;
 
                         OverlapReal rsq = dot(r_i_test,r_i_test);
                         OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
@@ -2954,7 +2954,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                         if (rsq <= r_cut_patch_i*r_cut_patch_i)
                             {
-                            const quat<Scalar> orientation_i = new_config ? shape_old.orientation : shape_i.orientation;
+                            const quat<Scalar> orientation_i = test_new ? shape_old.orientation : shape_i.orientation;
                             float U = this->m_patch->energy(r_i_test,
                                                       typ_i,
                                                       quat<float>(orientation_i),
@@ -3063,11 +3063,12 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                 // construct the kernel matrix of the determinantal and the permenental process
                 Eigen::MatrixXcd K_det(n,n);
+                Eigen::MatrixXd K_per(n,n);
 
                 // depletant i
                 #ifdef ENABLE_TBB
                 tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
-                    [=, &K_det,
+                    [=, &K_det, &K_per,
                         &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& t) {
                 for (unsigned int l = t.begin(); l != t.end(); ++l)
                 #else
@@ -3091,7 +3092,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     // depletant j
                     #ifdef ENABLE_TBB
                     tbb::parallel_for(tbb::blocked_range<unsigned int>(l, (unsigned int)n),
-                        [=, &K_det,
+                        [=, &K_det, &K_per,
                             &shape_old, &shape_i, &thread_counters](const tbb::blocked_range<unsigned int>& u) {
                     for (unsigned int m = u.begin(); m != u.end(); ++m)
                     #else
@@ -3150,16 +3151,18 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                             }
 
 
-                        // distribute the potential of mean force onto the bosonic and fermionic kernels
-
-                        // Laplace functional: <e^(-sum_i x_i)> = det(I - K_prime)
-                        std::complex<double> K;
-                        K.real((overlap_ij || l == m) + (1-(overlap_ij || l == m))*((U_ij > 0) ? fast::sqrt(1-std::exp(-U_ij)) : 0));
-                        K.imag((U_ij < 0) ? fast::sqrt(std::exp(-U_ij)-1) : 0);
-                        K_det(l,m) = std::complex<double>(l == m) - K*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
+                        // distribute the potential of mean force onto the bosonic and fermionic averages
+                        // Laplace functional: <e^(-sum_i x_i)> = det(I +- K_prime)
+                        double h = (U_ij < 0 && !overlap_ij) ? fast::sqrt(std::exp(-U_ij)-1) : 0;
+                        double K = overlap_ij + (1-overlap_ij)*((U_ij > 0) ? fast::sqrt(1-std::exp(-U_ij)) : 0);
+//                        K_per(l,m) = (l == m) + ((l==m)+(l!=m)*0.5*(h+K))*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
+//                        K_det(l,m) = (l == m) - ((l==m)+(l!=m)*0.5*(h-K))*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
+                        K_per(l,m) = ((l==m)+(l!=m)*h)*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
+                        K_det(l,m) = (std::complex<double>(l==m)+std::complex<double>(l!=m)*std::complex<double>(K,h))*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
 
                         // make them symmetric
                         K_det(m,l) = std::conj(K_det(l,m));
+                        K_per(m,l) = K_per(l,m);
                         } // end loop over depletant j
                     #ifdef ENABLE_TBB
                         });
@@ -3170,7 +3173,6 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 #endif
 
                 #ifdef ENABLE_TBB
-                // deltaF == free energy difference
                 tbb::enumerable_thread_specific<Scalar> det_thread(1.0);
                 #endif
                 double det(1.0);
@@ -3178,9 +3180,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 if (n > 0)
                     {
                     // diagonalize to compute the determinant
-                    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> es(n);
-                    es.compute(K_det, Eigen::EigenvaluesOnly);
-                    auto alpha = es.eigenvalues();
+                    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> es_det(n);
+                    es_det.compute(K_det, Eigen::EigenvaluesOnly);
+                    auto alpha_det = es_det.eigenvalues();
+
+                    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_per(n);
+                    es_per.compute(K_per, Eigen::EigenvaluesOnly);
+                    auto alpha_per = es_per.eigenvalues();
 
                     #ifdef ENABLE_TBB
                     tbb::parallel_for(tbb::blocked_range<unsigned int>(0, (unsigned int)n),
@@ -3191,9 +3197,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     #endif
                         {
                         #ifdef ENABLE_TBB
-                        det_thread.local() *= alpha(l);
+                        det_thread.local() *= (1-alpha_det(l));///(1+alpha_per(l));
                         #else
-                        det *= alpha(l);
+                        det *= (1-alpha_det(l));///(1+alpha_per(l));
                         #endif
                         } // end loop over depletant j
                     #ifdef ENABLE_TBB
