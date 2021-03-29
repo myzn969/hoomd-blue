@@ -3234,7 +3234,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 if (m > 0)
                     {
                     // DPP sampling algorithm see Lavancier et al. 2014, and Hough 2006
-                    Eigen::MatrixXd e(m,m);
+                    Eigen::MatrixXd e(n,m);
                     for (int k = m-1; k >= 0; k--)
                         {
                         // pick a random point X_k
