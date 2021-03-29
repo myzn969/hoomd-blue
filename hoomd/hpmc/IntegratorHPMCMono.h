@@ -2482,7 +2482,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     for (unsigned int type_a = 0; type_a < this->m_pdata->getNTypes(); ++type_a)
         {
         // MHAAR random variable
-        bool select = false && hoomd::UniformIntDistribution(1)(rng_depletants);
+        bool select = hoomd::UniformIntDistribution(1)(rng_depletants);
 
         unsigned int type_b = type_a;
 
@@ -3064,10 +3064,8 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 f_i_other = overlap_i_other + (1-overlap_i_other)*f_i_other;
                 f_j = has_overlap + (1-has_overlap)*f_j;
 
-//                        laplace_new(l) = 1-f_i*(1-f_j)*(1-f_i_other); // need to generate DPP at new position
-                    laplace_new(l) = (1-f_i)*(1-f_j); // need to generate DPP at new position
-//                        laplace_old(l) = 1-f_i*(1-f_j)*(1-f_i_other);
-                    laplace_old(l) = (1-f_i_other)*(1-f_j);
+                laplace_new(l) = (1-f_i)*(1-f_j); // need to generate DPP at new position
+                laplace_old(l) = (1-f_i_other)*(1-f_j);
                 } // end loop over depletants
             #ifdef ENABLE_TBB
                 });
@@ -3168,8 +3166,6 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     // Laplace functional: <e^(-sum_i x_i)> = det(I +- K_prime)
                     double h = (U_ij < 0 && !overlap_ij) ? fast::sqrt(std::exp(-U_ij)-1) : 0;
                     double K = overlap_ij + (1-overlap_ij)*((U_ij > 0) ? fast::sqrt(1-std::exp(-U_ij)) : 0);
-//                        K_per(l,m) = (l == m) + ((l==m)+(l!=m)*0.5*(h+K))*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
-//                        K_det(l,m) = (l == m) - ((l==m)+(l!=m)*0.5*(h-K))*fast::sqrt(1-laplace(l))*fast::sqrt(1-laplace(m));
                     K_per(l,m) = ((l==m)+(l!=m)*h);
 
                     if (test_new)
@@ -3327,9 +3323,15 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     #endif
                         {
                         #ifdef ENABLE_TBB
-                        det_thread.local() *= lambda_new(l)/lambda_old(l);
+                        if (test_new)
+                            det_thread.local() *= lambda_new(l)/lambda_old(l);
+                        else
+                            det_thread.local() *= lambda_old(l)/lambda_new(l);
                         #else
-                        det *= lambda_new(l)/lambda_old(l);
+                        if (test_new)
+                            det *= lambda_new(l)/lambda_old(l);
+                        else
+                            det *= lambda_old(l)/lambda_new(l);
                         #endif
                         } // end loop over depletant j
                     #ifdef ENABLE_TBB
