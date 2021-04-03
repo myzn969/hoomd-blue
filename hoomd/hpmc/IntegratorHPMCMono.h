@@ -2785,9 +2785,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
         for (unsigned int i_trial = 0; i_trial < ntrial; ++i_trial)
         #endif
             {
-            bool test_new = (!select || !i_trial);
+            bool new_sampling_location = (!select || !i_trial);
 
-            detail::OBB obb_i = test_new ? obb_i_new : obb_i_old;
+            detail::OBB obb_i = new_sampling_location ? obb_i_new : obb_i_old;
 
             if (this->m_patch)
                 {
@@ -2808,7 +2808,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             Scalar lambda = std::abs(fugacity)*V_i;
             hoomd::PoissonDistribution<Scalar> poisson(lambda);
             hoomd::RandomGenerator rng_num(hoomd::RNGIdentifier::HPMCDepletantNum,
-                type_a, test_new ? seed_i_new : seed_i_old, i_trial);
+                type_a, new_sampling_location ? seed_i_new : seed_i_old, i_trial);
 
             unsigned int n = poisson(rng_num);
 
@@ -2817,7 +2817,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             Eigen::VectorXd laplace_old(n);
 
             // try inserting in the overlap volume
-            unsigned int n_intersect = test_new ? pos_j_new.size() : pos_j_old.size();
+            unsigned int n_intersect = new_sampling_location ? pos_j_new.size() : pos_j_old.size();
 
             // for every depletant
             #ifdef ENABLE_TBB
@@ -2833,7 +2833,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             #endif
                 {
                 hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                        test_new ? seed_i_new : seed_i_old, type_a, i_trial, l);
+                        new_sampling_location ? seed_i_new : seed_i_old, type_a, i_trial, l);
 
                 if (! shape_i.ignoreStatistics())
                     {
@@ -2859,9 +2859,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 // Check if the new (old) configuration of particle i generates an overlap
                 bool overlap_i = false;
 
-                vec3<Scalar> r_i_test = pos_test - (test_new ? pos_i : pos_i_old);
+                vec3<Scalar> r_i_test = pos_test - pos_i;
                     {
-                    const Shape& shape = test_new ? shape_i : shape_old;
+                    const Shape& shape = shape_i;
 
                     OverlapReal rsq = dot(r_i_test,r_i_test);
                     OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
@@ -2903,7 +2903,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                     if (rsq <= r_cut_patch_i*r_cut_patch_i)
                         {
-                        const quat<Scalar> orientation_i = test_new ? shape_i.orientation : shape_old.orientation;
+                        const quat<Scalar> orientation_i = shape_i.orientation;
                         float U = this->m_patch->energy(r_i_test,
                                                   typ_i,
                                                   quat<float>(orientation_i),
@@ -2919,9 +2919,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                 // other configuration
                 bool overlap_i_other = false;
-                r_i_test = pos_test - (!test_new ? pos_i : pos_i_old);
+                r_i_test = pos_test - pos_i_old;
                     {
-                    const Shape& shape = test_new ? shape_old : shape_i;
+                    const Shape& shape = shape_old;
 
                     OverlapReal rsq = dot(r_i_test,r_i_test);
                     OverlapReal DaDb = shape_test.getCircumsphereDiameter() + shape.getCircumsphereDiameter();
@@ -2963,7 +2963,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                     if (rsq <= r_cut_patch_i*r_cut_patch_i)
                         {
-                        const quat<Scalar> orientation_i = test_new ? shape_old.orientation : shape_i.orientation;
+                        const quat<Scalar> orientation_i = shape_old.orientation;
                         float U = this->m_patch->energy(r_i_test,
                                                   typ_i,
                                                   quat<float>(orientation_i),
@@ -2982,9 +2982,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                 for (unsigned int m = 0; m < n_intersect; ++m)
                     {
-                    unsigned int type_m = test_new ? type_j_new[m] : type_j_old[m];
-                    Shape shape_m(test_new ? orientation_j_new[m] : orientation_j_old[m], this->m_params[type_m]);
-                    vec3<Scalar> r_mk = (test_new ? pos_j_new[m] : pos_j_old[m]) - pos_test;
+                    unsigned int type_m = new_sampling_location ? type_j_new[m] : type_j_old[m];
+                    Shape shape_m(new_sampling_location ? orientation_j_new[m] : orientation_j_old[m], this->m_params[type_m]);
+                    vec3<Scalar> r_mk = (new_sampling_location ? pos_j_new[m] : pos_j_old[m]) - pos_test;
 
                     #ifdef ENABLE_TBB
                     thread_counters.local().overlap_checks++;
@@ -3030,9 +3030,9 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     OverlapReal r_cut_patch = this->m_patch->getRCut();
                     for (unsigned int m = 0; m < n_intersect; ++m)
                         {
-                        unsigned int type_m = test_new ? type_j_new[m] : type_j_old[m];
-                        quat<Scalar> orientation_m  = test_new ? orientation_j_new[m] : orientation_j_old[m];
-                        vec3<Scalar> r_mk = (test_new ? pos_j_new[m] : pos_j_old[m]) - pos_test;
+                        unsigned int type_m = new_sampling_location ? type_j_new[m] : type_j_old[m];
+                        quat<Scalar> orientation_m  = new_sampling_location ? orientation_j_new[m] : orientation_j_old[m];
+                        vec3<Scalar> r_mk = (new_sampling_location ? pos_j_new[m] : pos_j_old[m]) - pos_test;
 
                         OverlapReal r_cut_patch_m = r_cut_patch + 0.5*this->m_patch->getAdditiveCutoff(type_m);
                         r_cut_patch_m += 0.5*this->m_patch->getAdditiveCutoff(type_a);
@@ -3087,7 +3087,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             #endif
                 {
                 hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                        test_new ? seed_i_new : seed_i_old, type_a, i_trial, l);
+                        new_sampling_location ? seed_i_new : seed_i_old, type_a, i_trial, l);
 
                 vec3<Scalar> pos_test(generatePositionInOBB(my_rng, obb_i, ndim));
 
@@ -3111,7 +3111,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 #endif
                     {
                     hoomd::RandomGenerator my_rng(hoomd::RNGIdentifier::HPMCDepletants,
-                            test_new ? seed_i_new : seed_i_old, type_a, i_trial, m);
+                            new_sampling_location ? seed_i_new : seed_i_old, type_a, i_trial, m);
 
                     // rejection-free sampling
                     vec3<Scalar> pos_test_neighbor(generatePositionInOBB(my_rng, obb_i, ndim));
@@ -3168,7 +3168,8 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     double K = overlap_ij + (1-overlap_ij)*((U_ij > 0) ? fast::sqrt(1-std::exp(-U_ij)) : 0);
                     K_per(l,m) = ((l==m)+(l!=m)*h);
 
-                    if (test_new)
+                    bool sample_in_old_configuration = !select || !i_trial;
+                    if (sample_in_old_configuration)
                         {
                         K_prime(l,m) = (l == m) - ((l==m)+(l!=m)*K)*fast::sqrt(1-laplace_old(l))*fast::sqrt(1-laplace_old(m));
                         }
@@ -3177,7 +3178,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                         K_prime(l,m) = (l == m) - ((l==m)+(l!=m)*K)*fast::sqrt(1-laplace_new(l))*fast::sqrt(1-laplace_new(m));
                         }
 
-                    K_det(l,m) = ((l==m)+(l!=m)*K);
+                    K_det(l,m) = (l==m)+(l!=m)*K;
 
                     // make them symmetric
                     K_prime(m,l) = K_prime(l,m);
@@ -3220,7 +3221,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
                 for (unsigned int k = 0; k < n; ++k)
                     {
-                    B[k] = hoomd::UniformDistribution<double>(0,1)(rng_dpp) < lambda(k);
+                    B[k] = hoomd::UniformDistribution<double>(0,1)(rng_dpp) < std::abs(lambda(k));
                     if (B[k])
                         m++;
                     else
@@ -3323,12 +3324,18 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                     #endif
                         {
                         #ifdef ENABLE_TBB
-                        if (test_new)
+                        if (!select)
+                            {
                             det_thread.local() *= lambda_new(l)/lambda_old(l);
+                            std::cout << "!" << lambda_old(l) << " (" << i_trial << ")" << std::endl;
+                            }
                         else
+                            {
                             det_thread.local() *= lambda_old(l)/lambda_new(l);
+                            std::cout << lambda_new(l) << " (" << i_trial << ")" << std::endl;
+                            }
                         #else
-                        if (test_new)
+                        if (!select)
                             det *= lambda_new(l)/lambda_old(l);
                         else
                             det *= lambda_old(l)/lambda_new(l);
@@ -3383,11 +3390,11 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
         else
             {
             double r_inv = 0.0;
-            sign_i_new = sign_i_old ^ (1/ratio_type[0] < 0);
+            sign_i_new = sign_i_old ^ (ratio_type[0] < 0);
 
             for (unsigned int k = 0; k < ntrial; ++k)
                 {
-                r_inv += std::max(0.0,(1-2*sign_i_new)*1/ratio_type[k]/ntrial);
+                r_inv += std::max(0.0,(1-2*sign_i_new)*ratio_type[k]/ntrial);
                 }
 
             r = 1/r_inv;
