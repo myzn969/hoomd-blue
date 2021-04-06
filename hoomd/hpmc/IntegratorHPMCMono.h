@@ -496,8 +496,7 @@ class IntegratorHPMCMono : public IntegratorHPMC
             const Scalar *h_diameter, const Scalar *h_charge, unsigned int *h_overlaps, hpmc_counters_t& counters,
             hpmc_implicit_counters_t *implicit_counters,
             unsigned int timestep, hoomd::RandomGenerator& rng_depletants,
-            unsigned int seed_i_old, unsigned int seed_i_new,
-            unsigned int &sign_i_new);
+            unsigned int seed_i_old, unsigned int seed_i_new);
 
         //! Set the nominal width appropriate for looped moves
         virtual void updateCellWidth();
@@ -1253,20 +1252,13 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
             unsigned int seed_i_new = hoomd::detail::generate_u32(rng_i);
 //            unsigned int seed_i_old = __scalar_as_int(h_vel.data[i].x);
             unsigned int seed_i_old = hoomd::detail::generate_u32(rng_i);
-            unsigned int sign_i_new = 0;
 
             if (has_depletants && accept)
                 {
-//                if (m_patch && !m_patch_log)
-//                    {
-//                    sign_i_new = hoomd::UniformIntDistribution(1)(rng_i);
-//                    }
-
                 accept = checkDepletantOverlap(i, pos_i, shape_i, typ_i, h_postype.data,
                     h_orientation.data, h_tag.data, h_vel.data, h_diameter.data,
                     h_charge.data, h_overlaps.data, counters, h_implicit_counters.data,
-                    timestep^i_nselect, rng_depletants, seed_i_old, seed_i_new,
-                    sign_i_new);
+                    timestep^i_nselect, rng_depletants, seed_i_old, seed_i_new);
                 }
 
             // If no overlaps and Metropolis criterion is met, accept
@@ -1299,7 +1291,6 @@ void IntegratorHPMCMono<Shape>::update(unsigned int timestep)
                 if (has_depletants)
                     {
                     h_vel.data[i].x = __int_as_scalar(seed_i_new);
-                    h_vel.data[i].y = __int_as_scalar(sign_i_new);
                     }
                 }
             else
@@ -2476,8 +2467,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     const Scalar4 *h_vel, const Scalar *h_diameter, const Scalar *h_charge,
     unsigned int *h_overlaps, hpmc_counters_t& counters, hpmc_implicit_counters_t *implicit_counters,
     unsigned int timestep, hoomd::RandomGenerator& rng_depletants,
-    unsigned int seed_i_old, unsigned int seed_i_new,
-    unsigned int &sign_i_new)
+    unsigned int seed_i_old, unsigned int seed_i_new)
     {
     const unsigned int n_images = this->m_image_list.size();
     unsigned int ndim = this->m_sysdef->getNDimensions();
@@ -3107,14 +3097,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
 
         // asymmetric acceptance probability
         double r = 0.0;
-        unsigned int sign_i_old = __scalar_as_int(h_vel[i].y);
         if (!select)
             {
             double sum = 0;
 
             for (unsigned int k = 0; k < ntrial; ++k)
                 {
-                sum += std::max(0.0,(1-2*sign_i_old)*ratio_type[k]/ntrial);
+                sum += std::max(0.0,ratio_type[k]/ntrial);
                 }
 
             r = sum;
@@ -3124,22 +3113,19 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
             unsigned int k = 0;
             for (; k < ntrial; ++k)
                 {
-                sum += std::max(0.0,(1-2*sign_i_old)*ratio_type[k]/ntrial);
+                sum += std::max(0.0,ratio_type[k]/ntrial);
 
                 if (u < sum)
                     break;
                 }
-
-            sign_i_new = sign_i_old ^ (ratio_type[k] < 0);
             }
         else
             {
             double r_inv = 0.0;
-            sign_i_new = sign_i_old ^ (ratio_type[0] < 0);
 
             for (unsigned int k = 0; k < ntrial; ++k)
                 {
-                r_inv += std::max(0.0,(1-2*sign_i_new)*ratio_type[k]/ntrial);
+                r_inv += std::max(0.0,ratio_type[k]/ntrial);
                 }
 
             r = 1/r_inv;
