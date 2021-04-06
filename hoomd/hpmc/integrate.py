@@ -294,6 +294,7 @@ class mode_hpmc(_integrator):
                    move_ratio=None,
                    nselect=None,
                    gamma=None,
+                   ntrial=None,
                    deterministic=None):
         R""" Changes parameters of an existing integration mode.
 
@@ -302,7 +303,8 @@ class mode_hpmc(_integrator):
             a (float): (if set) Maximum rotation move, Scalar to set for all types, or a dict containing {type:size} to set by type.
             move_ratio (float): (if set) New value for the move ratio.
             nselect (int): (if set) New value for the number of particles to select for trial moves in one cell.
-            gamma (float): (if set) Multiplier for the depletants sampling density (default == 0), or a dict containing {(type_a,type_b): gamma}
+            gamma (float): (if set) Multiplier for the depletants sampling density (default == 1), or a dict containing {(type_a,type_b): gamma}
+            ntrial (float): (if set) Number of independent estimates for depletion
             deterministic (bool): (if set) Make HPMC integration deterministic on the GPU by sorting the cell list.
 
         .. note:: Simulations are only deterministic with respect to the same execution configuration (CPU or GPU) and
@@ -347,6 +349,17 @@ class mode_hpmc(_integrator):
                 for i in range(hoomd.context.current.system_definition.getParticleData().getNTypes()):
                     for j in range(hoomd.context.current.system_definition.getParticleData().getNTypes()):
                         self.cpp_integrator.setGamma(i,j,float(gamma));
+
+        if ntrial is not None:
+            if isinstance(ntrial, dict):
+                for t,t_ntrial in ntrial.items():
+                    type_a = hoomd.context.current.system_definition.getParticleData().getTypeByName(t[0])
+                    type_b = hoomd.context.current.system_definition.getParticleData().getTypeByName(t[1])
+                    self.cpp_integrator.setNtrial(type_a,type_b,int(t_ntrial))
+            else:
+                for i in range(hoomd.context.current.system_definition.getParticleData().getNTypes()):
+                    for j in range(hoomd.context.current.system_definition.getParticleData().getNTypes()):
+                        self.cpp_integrator.setNtrial(i,j,int(ntrial));
 
         if deterministic is not None:
             self.cpp_integrator.setDeterministic(deterministic);

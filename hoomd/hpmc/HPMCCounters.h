@@ -200,11 +200,13 @@ DEVICE inline hpmc_boxmc_counters_t operator-(const hpmc_boxmc_counters_t& a, co
 struct hpmc_implicit_counters_t
     {
     unsigned long long int insert_count;              //!< Count of depletants inserted
+    unsigned long long int bound_violations;          //!< Number of times the probability bounds have been violated
 
     //! Construct a zero set of counters
     DEVICE hpmc_implicit_counters_t()
         {
         insert_count = 0;
+        bound_violations = 0;
         }
     };
 
@@ -333,6 +335,7 @@ DEVICE inline hpmc_implicit_counters_t operator-(const hpmc_implicit_counters_t&
     {
     hpmc_implicit_counters_t result;
     result.insert_count = a.insert_count - b.insert_count;
+    result.bound_violations = a.bound_violations - b.bound_violations;
     return result;
     }
 
@@ -341,6 +344,7 @@ DEVICE inline hpmc_implicit_counters_t operator+(const hpmc_implicit_counters_t&
     {
     hpmc_implicit_counters_t result;
     result.insert_count = a.insert_count + b.insert_count;
+    result.bound_violations = a.bound_violations + b.bound_violations;
     return result;
     }
 

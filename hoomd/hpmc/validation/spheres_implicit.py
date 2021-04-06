@@ -112,14 +112,15 @@ class implicit_test (unittest.TestCase):
 
         self.system.particles.types.add('B')
 
-#    def test_sphere_gamma0(self):
-#        self.measure_etap_sphere(all_use_clusters, gamma=0)
+#    def test_sphere_ntrial0(self):
+#        self.measure_etap_sphere(all_use_clusters, ntrial=0)
 
-    def test_sphere_gamma(self): # we could coment out this one if the CI takes too long
-        self.measure_etap_sphere(all_use_clusters, gamma=3)
-#        self.measure_etap_sphere(all_use_clusters, gamma=1)
+    def test_sphere_ntrial(self): # we could coment out this one if the CI takes too long
+        #self.measure_etap_sphere(all_use_clusters, ntrial=3, gamma=1)
+        self.measure_etap_sphere(all_use_clusters, ntrial=1, gamma=5)
+#        self.measure_etap_sphere(all_use_clusters, ntrial=1, gamma=1)
 
-    def measure_etap_sphere(self, use_clusters, gamma):
+    def measure_etap_sphere(self, use_clusters, ntrial, gamma):
         self.mc = hpmc.integrate.sphere(seed=seed)
         self.mc.overlap_checks.set('B','B',enable=False)
         self.mc.set_params(d=0.1,a=0.1)
@@ -138,6 +139,7 @@ class implicit_test (unittest.TestCase):
         nR = eta_p_r/(math.pi/6.0*math.pow(d_sphere*q,3.0))
         self.mc.set_fugacity('B',nR)
 
+        self.mc.set_params(ntrial=ntrial)
         self.mc.set_params(gamma=gamma)
 
         free_volume = hpmc.compute.free_volume(mc=self.mc, seed=seed, nsample=10000, test_type='B')
@@ -187,7 +189,7 @@ class implicit_test (unittest.TestCase):
         self.assertLessEqual(math.fabs(eta_p_avg-eta_p_ref[(phi_c,eta_p_r)][0]),ci*(eta_p_ref[(phi_c,eta_p_r)][1]+eta_p_err))
         del self.mc
 
-    def measure_etap_sphere_union(self, use_clusters, gamma):
+    def measure_etap_sphere_union(self, use_clusters, ntrial):
         # reduce the sphere union case to the sphere one by including an (irrelevant) sphere into a larger one
         self.mc = hpmc.integrate.sphere_union(seed=seed)
         self.mc.set_params(d=0.1,a=0.1)
@@ -195,7 +197,7 @@ class implicit_test (unittest.TestCase):
         self.mc.shape_param.set('B', centers=[(0,0,0)],diameters=[d_sphere*q],capacity=1)
 
         if not use_clusters:
-            self.mc_tune = hpmc.util.tune(self.mc, tunables=['d'],max_val=[d_sphere],gamma=1,target=0.2)
+            self.mc_tune = hpmc.util.tune(self.mc, tunables=['d'],max_val=[d_sphere],ntrial=1,target=0.2)
             for i in range(10):
                 run(100, quiet=True)
                 self.mc_tune.update()
@@ -206,7 +208,7 @@ class implicit_test (unittest.TestCase):
         nR = eta_p_r/(math.pi/6.0*math.pow(d_sphere*q,3.0))
         self.mc.set_fugacity('B',nR)
 
-        self.mc.set_params(gamma=gamma)
+        self.mc.set_params(ntrial=ntrial)
 
         free_volume = hpmc.compute.free_volume(mc=self.mc, seed=seed, nsample=10000, test_type='B')
         log=analyze.log(filename=None, quantities=['hpmc_overlap_count','volume','hpmc_free_volume','hpmc_fugacity_B'], overwrite=True,period=100)
