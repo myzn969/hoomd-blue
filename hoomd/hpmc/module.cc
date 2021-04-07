@@ -107,7 +107,7 @@ PYBIND11_MODULE(_hpmc, m)
     export_modules<ShapeUnion<ShapeFacetedEllipsoid> >(m, "FacetedEllipsoidUnion");
     export_modules<ShapeUnion<ShapeSphere> >(m, "SphereUnion");
     export_modules<ShapeConvexPolyhedron>(m, "ConvexPolyhedron");
-    export_modules<ShapeSpheropolyhedron>(m, "Spheropolyhdron");
+    export_modules<ShapeSpheropolyhedron>(m, "Spheropolyhedron");
 
     #ifdef ENABLE_HIP
     export_gpu_modules<ShapeSphere>(m, "Sphere");
@@ -124,7 +124,7 @@ PYBIND11_MODULE(_hpmc, m)
     export_gpu_modules<ShapeUnion<ShapeFacetedEllipsoid> >(m, "FacetedEllipsoidUnion");
     export_gpu_modules<ShapeUnion<ShapeSphere> >(m, "SphereUnion");
     export_gpu_modules<ShapeConvexPolyhedron>(m, "ConvexPolyhedron");
-    export_gpu_modules<ShapeSpheropolyhedron>(m, "Spheropolyhdron");
+    export_gpu_modules<ShapeSpheropolyhedron>(m, "Spheropolyhedron");
     #endif
 
     py::class_<sph_params, std::shared_ptr<sph_params> >(m, "sph_params");
