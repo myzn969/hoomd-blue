@@ -2773,7 +2773,7 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
         #endif
             {
             bool repulsive = fugacity < 0;
-            bool new_sampling_location = (!select || !i_trial) ^ repulsive;
+            bool new_sampling_location = !(!select || !i_trial) ^ repulsive;
 
             detail::OBB obb_i = new_sampling_location ? obb_i_new : obb_i_old;
 
@@ -3054,13 +3054,13 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 f_i_other = overlap_i_other + (1-overlap_i_other)*f_i_other;
                 f_j = has_overlap + (1-has_overlap)*f_j;
 
-                double numerator = 1-(!select^repulsive ? f_i : f_i_other)*(1-f_j)*(new_sampling_location ? (1-f_i_other) : (1-f_i))/gamma;
+                double numerator = 1-(!select^repulsive ? (1-f_i) : (1-f_i_other))*f_j*(new_sampling_location ? f_i : f_i_other)/gamma;
 
                 bool out_of_bounds = false;
                 if (numerator < 0)
                     out_of_bounds = true;
 
-                double denominator = 1-(!select^repulsive ? f_i_other : f_i)*(1-f_j)*(new_sampling_location ? (1-f_i_other) : (1-f_i))/gamma;
+                double denominator = 1-(!select^repulsive ? (1-f_i_other) : (1-f_i))*f_j*(new_sampling_location ? f_i : f_i_other)/gamma;
                 if (denominator < 0)
                     out_of_bounds = true;
 

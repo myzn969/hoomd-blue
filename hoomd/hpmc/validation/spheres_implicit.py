@@ -117,7 +117,7 @@ class implicit_test (unittest.TestCase):
 
     def test_sphere_ntrial(self): # we could coment out this one if the CI takes too long
         #self.measure_etap_sphere(all_use_clusters, ntrial=3, gamma=1)
-        self.measure_etap_sphere(all_use_clusters, ntrial=1, gamma=5)
+        self.measure_etap_sphere(all_use_clusters, ntrial=2, gamma=1)
 #        self.measure_etap_sphere(all_use_clusters, ntrial=1, gamma=1)
 
     def measure_etap_sphere(self, use_clusters, ntrial, gamma):
