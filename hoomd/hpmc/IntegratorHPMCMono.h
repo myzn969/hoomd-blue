@@ -2482,296 +2482,307 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
     tbb::enumerable_thread_specific<hpmc_counters_t> thread_counters;
     #endif
 
+    unsigned int ntrial = m_ntrial[0]; // FIXME
+
     // MH ratio
-    Scalar r_tot(1.0);
+    #ifdef ENABLE_TBB
+    std::vector<tbb::enumerable_thread_specific<double> > r_thread(ntrial,
+        tbb::enumerable_thread_specific<double>(1));
+    #endif
+    std::vector<double> r(ntrial,1.0);
 
-    for (unsigned int type_a = 0; type_a < this->m_pdata->getNTypes(); ++type_a)
+    ArrayHandle<Scalar> h_fugacity(m_fugacity, access_location::host, access_mode::read);
+    ArrayHandle<float> h_gamma(m_gamma, access_location::host, access_mode::read);
+
+    // MHAAR random variable
+    bool select = hoomd::UniformIntDistribution(1)(rng_depletants);
+
+    #ifdef ENABLE_TBB
+    tbb::parallel_for(tbb::blocked_range<unsigned int>(0, ntrial),
+        [=, &shape_old, &shape_i,
+            &r, &r_thread,
+            &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& w) {
+    for (unsigned int i_trial = w.begin(); i_trial != w.end(); ++i_trial)
+    #else
+    for (unsigned int i_trial = 0; i_trial < ntrial; ++i_trial)
+    #endif
         {
-        // MHAAR random variable
-        bool select = hoomd::UniformIntDistribution(1)(rng_depletants);
-
-        unsigned int type_b = type_a;
-
-        // GlobalVector is not thread-safe, access it outside the parallel loop
-        Scalar fugacity = m_fugacity[m_depletant_idx(type_a,type_b)];
-        if (fugacity == 0.0 || (!this->m_patch && !h_overlaps[this->m_overlap_idx(type_a, typ_i)]
-            && !h_overlaps[this->m_overlap_idx(type_b, typ_i)]))
-            continue;
-
-        float gamma = m_gamma[m_depletant_idx(type_a,type_b)];
-        unsigned int ntrial = m_ntrial[m_depletant_idx(type_a,type_b)];
-
-        std::vector<vec3<Scalar> > pos_j_old;
-        std::vector<quat<Scalar> > orientation_j_old;
-        std::vector<unsigned int> type_j_old;
-        std::vector<unsigned int> tag_j_old;
-        std::vector<unsigned int> seed_j_old;
-
-        std::vector<vec3<Scalar> > pos_j_new;
-        std::vector<quat<Scalar> > orientation_j_new;
-        std::vector<unsigned int> type_j_new;
-        std::vector<unsigned int> tag_j_new;
-        std::vector<unsigned int> seed_j_new;
-        std::vector<unsigned int> sign_j_new;
-
-        // find neighbors whose OBBs overlap particle i's OBB in the old configuration
-        Shape tmp_a(quat<Scalar>(), this->m_params[type_a]);
-        Shape tmp_b(quat<Scalar>(), this->m_params[type_b]);
-        Scalar d_dep_a = tmp_a.getCircumsphereDiameter();
-        Scalar d_dep_b = tmp_b.getCircumsphereDiameter();
-
-        // the relevant search radius is the one for the larger depletant
-        Scalar d_dep_search = std::max(d_dep_a, d_dep_b);
-
-        // we're sampling in the larger volume, so that it strictly covers the insertion volume of
-        // the smaller depletant
-        Scalar r_dep_sample = 0.5*d_dep_search;
-
-        vec3<Scalar> pos_i_old(h_postype[i]);
-        detail::OBB obb_i_old = shape_old.getOBB(pos_i_old);
-
-        // get old AABB and extend
-        vec3<Scalar> lower = aabb_i_local_old.getLower();
-        vec3<Scalar> upper = aabb_i_local_old.getUpper();
-        lower.x -= d_dep_search; lower.y -= d_dep_search; lower.z -= d_dep_search;
-        upper.x += d_dep_search; upper.y += d_dep_search; upper.z += d_dep_search;
-
-        detail::AABB aabb_local = detail::AABB(lower,upper);
-
-        // extend by depletant radius
-        obb_i_old.lengths.x += r_dep_sample;
-        obb_i_old.lengths.y += r_dep_sample;
-        obb_i_old.lengths.z += r_dep_sample;
-
-        Scalar r_cut_patch = 0.0;
-        if (this->m_patch)
-            {
-            r_cut_patch = this->m_patch->getRCut();
-
-            Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
-            delta += this->m_patch->getAdditiveCutoff(type_a);
-
-            lower.x = std::min(lower.x, -2*r_cut_patch-delta);
-            lower.y = std::min(lower.y, -2*r_cut_patch-delta);
-            lower.z = std::min(lower.z, -2*r_cut_patch-delta);
-            upper.x = std::max(upper.x, 2*r_cut_patch+delta);
-            upper.y = std::max(upper.y, 2*r_cut_patch+delta);
-            upper.z = std::max(upper.z, 2*r_cut_patch+delta);
-            aabb_local = detail::AABB(lower,upper);
-            }
-
-        // All image boxes (including the primary)
-        for (unsigned int cur_image = 0; cur_image < n_images; cur_image++)
-            {
-            vec3<Scalar> pos_i_old_image = pos_i_old + this->m_image_list[cur_image];
-            detail::AABB aabb = aabb_local;
-            aabb.translate(pos_i_old_image);
-
-            // stackless search
-            for (unsigned int cur_node_idx = 0; cur_node_idx < this->m_aabb_tree.getNumNodes(); cur_node_idx++)
-                {
-                if (detail::overlap(this->m_aabb_tree.getNodeAABB(cur_node_idx), aabb))
-                    {
-                    if (this->m_aabb_tree.isNodeLeaf(cur_node_idx))
-                        {
-                        for (unsigned int cur_p = 0; cur_p < this->m_aabb_tree.getNodeNumParticles(cur_node_idx); cur_p++)
-                            {
-                            // read in its position and orientation
-                            unsigned int j = this->m_aabb_tree.getNodeParticle(cur_node_idx, cur_p);
-
-                            if (i == j && cur_image == 0) continue;
-
-                            // load the old position and orientation of the j particle
-                            Scalar4 postype_j = h_postype[j];
-                            vec3<Scalar> pos_j(postype_j);
-
-                            unsigned int typ_j = __scalar_as_int(postype_j.w);
-                            Shape shape_j(quat<Scalar>(), this->m_params[typ_j]);
-                            if (shape_j.hasOrientation())
-                                shape_j.orientation = quat<Scalar>(h_orientation[j]);
-
-                            // get shape OBB
-                            detail::OBB obb_j = shape_j.getOBB(pos_j-this->m_image_list[cur_image]);
-
-                            // extend by depletant radius
-                            obb_j.lengths.x += r_dep_sample;
-                            obb_j.lengths.y += r_dep_sample;
-                            obb_j.lengths.z += r_dep_sample;
-
-                            // check excluded volume overlap
-                            bool overlap_excluded = (h_overlaps[this->m_overlap_idx(type_a,typ_j)] ||
-                                h_overlaps[this->m_overlap_idx(type_b,typ_j)]) &&
-                                detail::overlap(obb_j, obb_i_old);
-
-                            if (this->m_patch)
-                                {
-                                OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_j);
-                                delta += 0.5*this->m_patch->getAdditiveCutoff(typ_i);
-                                delta += this->m_patch->getAdditiveCutoff(type_a);
-
-                                vec3<Scalar> r_ij = pos_j - this->m_image_list[cur_image] - pos_i_old;
-                                OverlapReal rsq = dot(r_ij,r_ij);
-                                if (rsq <= (2*r_cut_patch+delta)*(2*r_cut_patch+delta))
-                                    overlap_excluded = true;
-                                }
-
-                            if (overlap_excluded)
-                                {
-                                // cache the translated position of particle j. If i's image is cur_image, then j's
-                                // image is the negative of that (and we use i's untranslated position below)
-                                pos_j_old.push_back(pos_j-this->m_image_list[cur_image]);
-                                orientation_j_old.push_back(shape_j.orientation);
-                                type_j_old.push_back(typ_j);
-                                tag_j_old.push_back(h_tag[j]);
-                                seed_j_old.push_back(__scalar_as_int(h_vel[j].x));
-                                }
-                            }
-                        }
-                    }
-                else
-                    {
-                    // skip ahead
-                    cur_node_idx += this->m_aabb_tree.getNodeSkip(cur_node_idx);
-                    }
-                }  // end loop over AABB nodes
-            } // end loop over images
-
-        // get new AABB and extend
-        lower = aabb_i_local.getLower();
-        upper = aabb_i_local.getUpper();
-        lower.x -= d_dep_search; lower.y -= d_dep_search; lower.z -= d_dep_search;
-        upper.x += d_dep_search; upper.y += d_dep_search; upper.z += d_dep_search;
-        aabb_local = detail::AABB(lower,upper);
-
-        detail::OBB obb_i_new = shape_i.getOBB(pos_i);
-        obb_i_new.lengths.x += r_dep_sample;
-        obb_i_new.lengths.y += r_dep_sample;
-        obb_i_new.lengths.z += r_dep_sample;
-
-        if (this->m_patch)
-            {
-            Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
-            delta += this->m_patch->getAdditiveCutoff(type_a);
-
-            lower.x = std::min(lower.x, -2*r_cut_patch-delta);
-            lower.y = std::min(lower.y, -2*r_cut_patch-delta);
-            lower.z = std::min(lower.z, -2*r_cut_patch-delta);
-            upper.x = std::max(upper.x, 2*r_cut_patch+delta);
-            upper.y = std::max(upper.y, 2*r_cut_patch+delta);
-            upper.z = std::max(upper.z, 2*r_cut_patch+delta);
-            aabb_local = detail::AABB(lower,upper);
-            }
-
-        // find neighbors at new position
-        for (unsigned int cur_image = 0; cur_image < n_images; cur_image++)
-            {
-            vec3<Scalar> pos_i_image = pos_i + this->m_image_list[cur_image];
-            detail::AABB aabb = aabb_local;
-            aabb.translate(pos_i_image);
-
-            // stackless search
-            for (unsigned int cur_node_idx = 0; cur_node_idx < this->m_aabb_tree.getNumNodes(); cur_node_idx++)
-                {
-                if (detail::overlap(this->m_aabb_tree.getNodeAABB(cur_node_idx), aabb))
-                    {
-                    if (this->m_aabb_tree.isNodeLeaf(cur_node_idx))
-                        {
-                        for (unsigned int cur_p = 0; cur_p < this->m_aabb_tree.getNodeNumParticles(cur_node_idx); cur_p++)
-                            {
-                            // read in its position and orientation
-                            unsigned int j = this->m_aabb_tree.getNodeParticle(cur_node_idx, cur_p);
-
-                            unsigned int typ_j;
-                            vec3<Scalar> pos_j;
-                            if (i == j)
-                                {
-                                if (cur_image == 0)
-                                    continue;
-                                else
-                                    {
-                                    pos_j = pos_i;
-                                    typ_j = typ_i;
-                                    }
-                                }
-                            else
-                                {
-                                // load the old position and orientation of the j particle
-                                Scalar4 postype_j = h_postype[j];
-                                pos_j = vec3<Scalar>(postype_j);
-                                typ_j = __scalar_as_int(postype_j.w);
-                                }
-
-                            Shape shape_j(quat<Scalar>(), this->m_params[typ_j]);
-
-                            if (shape_j.hasOrientation())
-                                {
-                                if (i == j)
-                                    shape_j.orientation = shape_i.orientation;
-                                else
-                                    shape_j.orientation = quat<Scalar>(h_orientation[j]);
-                                }
-
-                            // get shape OBB
-                            detail::OBB obb_j = shape_j.getOBB(pos_j-this->m_image_list[cur_image]);
-
-                            // extend by depletant radius
-                            obb_j.lengths.x += r_dep_sample;
-                            obb_j.lengths.y += r_dep_sample;
-                            obb_j.lengths.z += r_dep_sample;
-
-                            // check excluded volume overlap
-                            bool overlap_excluded = (h_overlaps[this->m_overlap_idx(type_a,typ_j)] ||
-                                h_overlaps[this->m_overlap_idx(type_b,typ_j)] || this->m_patch) &&
-                                detail::overlap(obb_j, obb_i_new);
-
-                            if (this->m_patch)
-                                {
-                                OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_j);
-                                delta += 0.5*this->m_patch->getAdditiveCutoff(typ_i);
-                                delta += this->m_patch->getAdditiveCutoff(type_a);
-
-                                vec3<Scalar> r_ij = pos_j - this->m_image_list[cur_image] - pos_i;
-                                OverlapReal rsq = dot(r_ij,r_ij);
-                                if (rsq <= (2*r_cut_patch+delta)*(2*r_cut_patch+delta))
-                                    overlap_excluded = true;
-                                }
-
-                            if (overlap_excluded)
-                                {
-                                // cache the translated position of particle j. If i's image is cur_image, then j's
-                                // image is the negative of that (and we use i's untranslated position below)
-                                pos_j_new.push_back(pos_j-this->m_image_list[cur_image]);
-                                orientation_j_new.push_back(shape_j.orientation);
-                                type_j_new.push_back(typ_j);
-                                tag_j_new.push_back(h_tag[j]);
-                                seed_j_new.push_back(__scalar_as_int(h_vel[j].x));
-                                sign_j_new.push_back(__scalar_as_int(h_vel[j].y));
-                                }
-                            }
-                        }
-                    }
-                else
-                    {
-                    // skip ahead
-                    cur_node_idx += this->m_aabb_tree.getNodeSkip(cur_node_idx);
-                    }
-                }  // end loop over AABB nodes
-            } // end loop over images
-
-        std::vector<double> ratio_type(ntrial);
-
         #ifdef ENABLE_TBB
-        tbb::parallel_for(tbb::blocked_range<unsigned int>(0, ntrial),
+        tbb::parallel_for(tbb::blocked_range<unsigned int>(0, this->m_pdata->getNTypes()),
             [=, &shape_old, &shape_i,
-                &pos_j_new, &orientation_j_new, &type_j_new,
-                &pos_j_old, &orientation_j_old, &type_j_old,
-                &ratio_type,
-                &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& w) {
-        for (unsigned int i_trial = w.begin(); i_trial != w.end(); ++i_trial)
+                &r_thread,
+                &thread_counters, &thread_implicit_counters](const tbb::blocked_range<unsigned int>& x) {
+        for (unsigned int type_a = x.begin(); type_a != x.end(); ++type_a)
         #else
-        for (unsigned int i_trial = 0; i_trial < ntrial; ++i_trial)
+        for (unsigned int type_a = 0; type_a < this->m_pdata->getNTypes(); ++type_a)
         #endif
             {
+            unsigned int type_b = type_a;
+
+            Scalar fugacity = h_fugacity.data[m_depletant_idx(type_a,type_b)];
+            if (fugacity == 0.0 || (!this->m_patch && !h_overlaps[this->m_overlap_idx(type_a, typ_i)]
+                && !h_overlaps[this->m_overlap_idx(type_b, typ_i)]))
+                continue;
+
+            float gamma = h_gamma.data[m_depletant_idx(type_a,type_b)];
+
+            std::vector<vec3<Scalar> > pos_j_old;
+            std::vector<quat<Scalar> > orientation_j_old;
+            std::vector<unsigned int> type_j_old;
+            std::vector<unsigned int> tag_j_old;
+            std::vector<unsigned int> seed_j_old;
+
+            std::vector<vec3<Scalar> > pos_j_new;
+            std::vector<quat<Scalar> > orientation_j_new;
+            std::vector<unsigned int> type_j_new;
+            std::vector<unsigned int> tag_j_new;
+            std::vector<unsigned int> seed_j_new;
+            std::vector<unsigned int> sign_j_new;
+
+            // find neighbors whose OBBs overlap particle i's OBB in the old configuration
+            Shape tmp_a(quat<Scalar>(), this->m_params[type_a]);
+            Shape tmp_b(quat<Scalar>(), this->m_params[type_b]);
+            Scalar d_dep_a = tmp_a.getCircumsphereDiameter();
+            Scalar d_dep_b = tmp_b.getCircumsphereDiameter();
+
+            // the relevant search radius is the one for the larger depletant
+            Scalar d_dep_search = std::max(d_dep_a, d_dep_b);
+
+            // we're sampling in the larger volume, so that it strictly covers the insertion volume of
+            // the smaller depletant
+            Scalar r_dep_sample = 0.5*d_dep_search;
+
+            vec3<Scalar> pos_i_old(h_postype[i]);
+            detail::OBB obb_i_old = shape_old.getOBB(pos_i_old);
+
+            // get old AABB and extend
+            vec3<Scalar> lower = aabb_i_local_old.getLower();
+            vec3<Scalar> upper = aabb_i_local_old.getUpper();
+            lower.x -= d_dep_search; lower.y -= d_dep_search; lower.z -= d_dep_search;
+            upper.x += d_dep_search; upper.y += d_dep_search; upper.z += d_dep_search;
+
+            detail::AABB aabb_local = detail::AABB(lower,upper);
+
+            // extend by depletant radius
+            obb_i_old.lengths.x += r_dep_sample;
+            obb_i_old.lengths.y += r_dep_sample;
+            obb_i_old.lengths.z += r_dep_sample;
+
+            Scalar r_cut_patch = 0.0;
+            if (this->m_patch)
+                {
+                r_cut_patch = this->m_patch->getRCut();
+
+                Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                delta += this->m_patch->getAdditiveCutoff(type_a);
+
+                lower.x = std::min(lower.x, -2*r_cut_patch-delta);
+                lower.y = std::min(lower.y, -2*r_cut_patch-delta);
+                lower.z = std::min(lower.z, -2*r_cut_patch-delta);
+                upper.x = std::max(upper.x, 2*r_cut_patch+delta);
+                upper.y = std::max(upper.y, 2*r_cut_patch+delta);
+                upper.z = std::max(upper.z, 2*r_cut_patch+delta);
+                aabb_local = detail::AABB(lower,upper);
+                }
+
+            // All image boxes (including the primary)
+            for (unsigned int cur_image = 0; cur_image < n_images; cur_image++)
+                {
+                vec3<Scalar> pos_i_old_image = pos_i_old + this->m_image_list[cur_image];
+                detail::AABB aabb = aabb_local;
+                aabb.translate(pos_i_old_image);
+
+                // stackless search
+                for (unsigned int cur_node_idx = 0; cur_node_idx < this->m_aabb_tree.getNumNodes(); cur_node_idx++)
+                    {
+                    if (detail::overlap(this->m_aabb_tree.getNodeAABB(cur_node_idx), aabb))
+                        {
+                        if (this->m_aabb_tree.isNodeLeaf(cur_node_idx))
+                            {
+                            for (unsigned int cur_p = 0; cur_p < this->m_aabb_tree.getNodeNumParticles(cur_node_idx); cur_p++)
+                                {
+                                // read in its position and orientation
+                                unsigned int j = this->m_aabb_tree.getNodeParticle(cur_node_idx, cur_p);
+
+                                if (i == j && cur_image == 0) continue;
+
+                                // load the old position and orientation of the j particle
+                                Scalar4 postype_j = h_postype[j];
+                                vec3<Scalar> pos_j(postype_j);
+
+                                unsigned int typ_j = __scalar_as_int(postype_j.w);
+                                Shape shape_j(quat<Scalar>(), this->m_params[typ_j]);
+                                if (shape_j.hasOrientation())
+                                    shape_j.orientation = quat<Scalar>(h_orientation[j]);
+
+                                // get shape OBB
+                                detail::OBB obb_j = shape_j.getOBB(pos_j-this->m_image_list[cur_image]);
+
+                                // extend by depletant radius
+                                obb_j.lengths.x += r_dep_sample;
+                                obb_j.lengths.y += r_dep_sample;
+                                obb_j.lengths.z += r_dep_sample;
+
+                                // check excluded volume overlap
+                                bool overlap_excluded = (h_overlaps[this->m_overlap_idx(type_a,typ_j)] ||
+                                    h_overlaps[this->m_overlap_idx(type_b,typ_j)]) &&
+                                    detail::overlap(obb_j, obb_i_old);
+
+                                if (this->m_patch)
+                                    {
+                                    OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_j);
+                                    delta += 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                                    delta += this->m_patch->getAdditiveCutoff(type_a);
+
+                                    vec3<Scalar> r_ij = pos_j - this->m_image_list[cur_image] - pos_i_old;
+                                    OverlapReal rsq = dot(r_ij,r_ij);
+                                    if (rsq <= (2*r_cut_patch+delta)*(2*r_cut_patch+delta))
+                                        overlap_excluded = true;
+                                    }
+
+                                if (overlap_excluded)
+                                    {
+                                    // cache the translated position of particle j. If i's image is cur_image, then j's
+                                    // image is the negative of that (and we use i's untranslated position below)
+                                    pos_j_old.push_back(pos_j-this->m_image_list[cur_image]);
+                                    orientation_j_old.push_back(shape_j.orientation);
+                                    type_j_old.push_back(typ_j);
+                                    tag_j_old.push_back(h_tag[j]);
+                                    seed_j_old.push_back(__scalar_as_int(h_vel[j].x));
+                                    }
+                                }
+                            }
+                        }
+                    else
+                        {
+                        // skip ahead
+                        cur_node_idx += this->m_aabb_tree.getNodeSkip(cur_node_idx);
+                        }
+                    }  // end loop over AABB nodes
+                } // end loop over images
+
+            // get new AABB and extend
+            lower = aabb_i_local.getLower();
+            upper = aabb_i_local.getUpper();
+            lower.x -= d_dep_search; lower.y -= d_dep_search; lower.z -= d_dep_search;
+            upper.x += d_dep_search; upper.y += d_dep_search; upper.z += d_dep_search;
+            aabb_local = detail::AABB(lower,upper);
+
+            detail::OBB obb_i_new = shape_i.getOBB(pos_i);
+            obb_i_new.lengths.x += r_dep_sample;
+            obb_i_new.lengths.y += r_dep_sample;
+            obb_i_new.lengths.z += r_dep_sample;
+
+            if (this->m_patch)
+                {
+                Scalar delta = 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                delta += this->m_patch->getAdditiveCutoff(type_a);
+
+                lower.x = std::min(lower.x, -2*r_cut_patch-delta);
+                lower.y = std::min(lower.y, -2*r_cut_patch-delta);
+                lower.z = std::min(lower.z, -2*r_cut_patch-delta);
+                upper.x = std::max(upper.x, 2*r_cut_patch+delta);
+                upper.y = std::max(upper.y, 2*r_cut_patch+delta);
+                upper.z = std::max(upper.z, 2*r_cut_patch+delta);
+                aabb_local = detail::AABB(lower,upper);
+                }
+
+            // find neighbors at new position
+            for (unsigned int cur_image = 0; cur_image < n_images; cur_image++)
+                {
+                vec3<Scalar> pos_i_image = pos_i + this->m_image_list[cur_image];
+                detail::AABB aabb = aabb_local;
+                aabb.translate(pos_i_image);
+
+                // stackless search
+                for (unsigned int cur_node_idx = 0; cur_node_idx < this->m_aabb_tree.getNumNodes(); cur_node_idx++)
+                    {
+                    if (detail::overlap(this->m_aabb_tree.getNodeAABB(cur_node_idx), aabb))
+                        {
+                        if (this->m_aabb_tree.isNodeLeaf(cur_node_idx))
+                            {
+                            for (unsigned int cur_p = 0; cur_p < this->m_aabb_tree.getNodeNumParticles(cur_node_idx); cur_p++)
+                                {
+                                // read in its position and orientation
+                                unsigned int j = this->m_aabb_tree.getNodeParticle(cur_node_idx, cur_p);
+
+                                unsigned int typ_j;
+                                vec3<Scalar> pos_j;
+                                if (i == j)
+                                    {
+                                    if (cur_image == 0)
+                                        continue;
+                                    else
+                                        {
+                                        pos_j = pos_i;
+                                        typ_j = typ_i;
+                                        }
+                                    }
+                                else
+                                    {
+                                    // load the old position and orientation of the j particle
+                                    Scalar4 postype_j = h_postype[j];
+                                    pos_j = vec3<Scalar>(postype_j);
+                                    typ_j = __scalar_as_int(postype_j.w);
+                                    }
+
+                                Shape shape_j(quat<Scalar>(), this->m_params[typ_j]);
+
+                                if (shape_j.hasOrientation())
+                                    {
+                                    if (i == j)
+                                        shape_j.orientation = shape_i.orientation;
+                                    else
+                                        shape_j.orientation = quat<Scalar>(h_orientation[j]);
+                                    }
+
+                                // get shape OBB
+                                detail::OBB obb_j = shape_j.getOBB(pos_j-this->m_image_list[cur_image]);
+
+                                // extend by depletant radius
+                                obb_j.lengths.x += r_dep_sample;
+                                obb_j.lengths.y += r_dep_sample;
+                                obb_j.lengths.z += r_dep_sample;
+
+                                // check excluded volume overlap
+                                bool overlap_excluded = (h_overlaps[this->m_overlap_idx(type_a,typ_j)] ||
+                                    h_overlaps[this->m_overlap_idx(type_b,typ_j)] || this->m_patch) &&
+                                    detail::overlap(obb_j, obb_i_new);
+
+                                if (this->m_patch)
+                                    {
+                                    OverlapReal delta = 0.5*this->m_patch->getAdditiveCutoff(typ_j);
+                                    delta += 0.5*this->m_patch->getAdditiveCutoff(typ_i);
+                                    delta += this->m_patch->getAdditiveCutoff(type_a);
+
+                                    vec3<Scalar> r_ij = pos_j - this->m_image_list[cur_image] - pos_i;
+                                    OverlapReal rsq = dot(r_ij,r_ij);
+                                    if (rsq <= (2*r_cut_patch+delta)*(2*r_cut_patch+delta))
+                                        overlap_excluded = true;
+                                    }
+
+                                if (overlap_excluded)
+                                    {
+                                    // cache the translated position of particle j. If i's image is cur_image, then j's
+                                    // image is the negative of that (and we use i's untranslated position below)
+                                    pos_j_new.push_back(pos_j-this->m_image_list[cur_image]);
+                                    orientation_j_new.push_back(shape_j.orientation);
+                                    type_j_new.push_back(typ_j);
+                                    tag_j_new.push_back(h_tag[j]);
+                                    seed_j_new.push_back(__scalar_as_int(h_vel[j].x));
+                                    sign_j_new.push_back(__scalar_as_int(h_vel[j].y));
+                                    }
+                                }
+                            }
+                        }
+                    else
+                        {
+                        // skip ahead
+                        cur_node_idx += this->m_aabb_tree.getNodeSkip(cur_node_idx);
+                        }
+                    }  // end loop over AABB nodes
+                } // end loop over images
+
             bool repulsive = fugacity < 0;
             bool new_sampling_location = !(!select || !i_trial) ^ repulsive;
 
@@ -3089,50 +3100,52 @@ inline bool IntegratorHPMCMono<Shape>::checkDepletantOverlap(unsigned int i, vec
                 }
             #endif
 
-            ratio_type[i_trial] = det;
-            } // end loop over i_trial
+            #ifdef ENABLE_TBB
+            r_thread[i_trial].local() *= det;
+            #else
+            r[i_trial] *= det;
+            #endif
+            } // end loop over type
         #ifdef ENABLE_TBB
             });
         #endif
 
-        // asymmetric acceptance probability
-        double r = 0.0;
-        if (!select)
+        #ifdef ENABLE_TBB
+        // reduce
+        for (auto rt: r_thread[i_trial])
             {
-            double sum = 0;
-
-            for (unsigned int k = 0; k < ntrial; ++k)
-                {
-                sum += std::max(0.0,ratio_type[k]/ntrial);
-                }
-
-            r = sum;
-
-            double u = hoomd::UniformDistribution<double>(0,sum)(rng_depletants);
-            sum = 0;
-            unsigned int k = 0;
-            for (; k < ntrial; ++k)
-                {
-                sum += std::max(0.0,ratio_type[k]/ntrial);
-
-                if (u < sum)
-                    break;
-                }
+            r[i_trial] *= rt;
             }
-        else
+        #endif
+        } // end loop over i_trial
+    #ifdef ENABLE_TBB
+        });
+    #endif
+
+    // asymmetric acceptance probability
+    double r_tot = 0.0;
+    if (!select)
+        {
+        double sum = 0;
+
+        for (unsigned int k = 0; k < ntrial; ++k)
             {
-            double r_inv = 0.0;
-
-            for (unsigned int k = 0; k < ntrial; ++k)
-                {
-                r_inv += std::max(0.0,ratio_type[k]/ntrial);
-                }
-
-            r = 1/r_inv;
+            sum += std::max(0.0,r[k]/ntrial);
             }
 
-        r_tot *= r;
-        } // end loop over type_a
+        r_tot = sum;
+        }
+    else
+        {
+        double r_inv = 0.0;
+
+        for (unsigned int k = 0; k < ntrial; ++k)
+            {
+            r_inv += std::max(0.0,r[k]/ntrial);
+            }
+
+        r_tot = 1/r_inv;
+        }
 
     double u = hoomd::UniformDistribution<double>()(rng_depletants);
 
