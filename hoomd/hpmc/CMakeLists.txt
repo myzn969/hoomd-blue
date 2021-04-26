@@ -195,10 +195,8 @@ else()
 set_target_properties(_hpmc PROPERTIES INSTALL_RPATH "\$ORIGIN/..;\$ORIGIN/../jit;\$ORIGIN")
 endif()
 
-if(ENABLE_HIP)
-    # enable out-of-source build
-    target_include_directories(_hpmc PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>")
-endif()
+# enable out-of-source build
+target_include_directories(_hpmc PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>")
 
 # link the library to its dependencies
 target_link_libraries(_hpmc PUBLIC _hoomd)
