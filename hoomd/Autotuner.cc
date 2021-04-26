@@ -171,8 +171,10 @@ void Autotuner::initialize(const std::vector<std::vector<unsigned int> >& params
         m_current_param[n] = m_parameters[n][m_current_element[n]];
         }
 
+    #ifdef ENABLE_HIP
     hipMallocManaged(&d_params, sizeof(unsigned int)*m_parameters.size());
     CHECK_CUDA_ERROR();
+    #endif
     }
 
 /*! \param enabled true to enable sampling, false to disable it
@@ -271,11 +273,11 @@ void Autotuner::begin()
 void Autotuner::end()
     {
     float sample = 0.0f;
-    #ifdef ENABLE_HIP
     // handle timing updates if scanning or attached
     bool enabled = m_enabled;
     bool attached = m_attached;
 
+    #ifdef ENABLE_HIP
     // skip if disabled
     if ((!enabled && !attached) || m_have_param)
         return;
