@@ -133,7 +133,7 @@ class EvaluatorPairTWF
                 return true;
                 }
 
-            Scalar common_term = 1.0 / (rsq / sigma2 - 1.0);
+            Scalar common_term = 1.0 / (rsq / sigma2 );
             Scalar common_term3 = common_term * common_term * common_term;
             Scalar common_term6 = common_term3 * common_term3;
             // Compute force and energy
@@ -145,7 +145,7 @@ class EvaluatorPairTWF
 
             if (energy_shift)
                 {
-                Scalar common_term_shift = 1.0 / (rcutsq / sigma2 - 1.0);
+                Scalar common_term_shift = 1.0 / (rcutsq / sigma2 );
                 Scalar common_term3_shift
                     = common_term_shift * common_term_shift * common_term_shift;
                 Scalar common_term6_shift = common_term3_shift * common_term3_shift;
